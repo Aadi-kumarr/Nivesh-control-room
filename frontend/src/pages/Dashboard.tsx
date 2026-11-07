@@ -1,0 +1,167 @@
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { api } from "../api";
+import { AllocationDonut, GrowthChart } from "../components/Charts";
+import { Modal, Money, Percent, Stat, Xirr } from "../components/common";
+import { useData } from "../DataContext";
+import { CLASS_NAMES, CLASS_ORDER, inr, signed } from "../format";
+import type { HistoryPoint, Summary } from "../types";
+
+function CashDialog({ cash, onClose }: { cash: number; onClose: () => void }) {
+  const { reload, addNotices } = useData();
+  const [text, setText] = useState(String(cash));
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      addNotices((await api.setCash(Number(text))).warnings);
+      await reload();
+      onClose();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not save.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title="Update cash" onClose={onClose}>
+      <form onSubmit={(event) => void save(event)}>
+        <label>Cash (₹)
+          <input type="number" min="0" step="any" value={text}
+            onChange={(e) => setText(e.target.value)} autoFocus required />
+        </label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="modal-actions">
+          <button type="button" className="button ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="button primary" disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** The Realised, Unrealised, Total and XIRR cells, shared by the class rows and TOTAL. */
+function PnlCells({ row }: { row: Summary }) {
+  return (
+    <>
+      <td className="num"><Money value={row.realised_pnl} /></td>
+      <td className="num">
+        <Money value={row.unrealised_pnl} />
+        {row.unrealised_pnl_pct !== null && (
+          <div className="subline"><Percent value={row.unrealised_pnl_pct} /></div>
+        )}
+      </td>
+      <td className="num"><Money value={row.pnl} /></td>
+      <td className="num"><Xirr value={row.xirr} /></td>
+    </>
+  );
+}
+
+export function Dashboard() {
+  const { portfolio } = useData();
+  const [points, setPoints] = useState<HistoryPoint[] | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [editingCash, setEditingCash] = useState(false);
+  const asOf = portfolio?.as_of;
+
+  // After the portfolio, so today's point uses the same stored prices as the cards.
+  useEffect(() => {
+    if (!asOf) return;
+    let current = true;
+    api.history()
+      .then((result) => { if (current) { setPoints(result.points); setHistoryError(null); } })
+      .catch((failure: Error) => { if (current) setHistoryError(failure.message); });
+    return () => { current = false; };
+  }, [asOf]);
+
+  if (!portfolio) return <p className="muted">Loading portfolio…</p>;
+  const total = portfolio.portfolio;
+
+  return (
+    <>
+      <section className="stats five">
+        <Stat label="Total portfolio value"><span data-testid="total-value">{inr(total.value)}</span></Stat>
+        <Stat label="Total profit / loss">
+          <span className={signed(total.pnl)} data-testid="total-pnl">{inr(total.pnl)}</span>
+        </Stat>
+        <Stat label="Realised P&L">
+          <span className={signed(total.realised_pnl)} data-testid="total-realised">{inr(total.realised_pnl)}</span>
+        </Stat>
+        <Stat label="Unrealised P&L" sub={<span data-testid="total-unrealised-pct"><Percent value={total.unrealised_pnl_pct} /></span>}>
+          <span className={signed(total.unrealised_pnl)} data-testid="total-unrealised">{inr(total.unrealised_pnl)}</span>
+        </Stat>
+        <Stat label="Portfolio XIRR" sub={
+          <span className="muted small-text">Based on all cash flows and current portfolio value.</span>
+        }>
+          <span data-testid="total-xirr"><Xirr value={total.xirr} /></span>
+        </Stat>
+      </section>
+
+      <section className="split">
+        <div className="card">
+          <h2>Asset class overview</h2>
+          <p className="muted small-text">Allocation and performance - Click any asset class to drill down.</p>
+          <div className="table-wrap">
+            <table data-testid="overview">
+              <thead>
+                <tr>
+                  <th>Asset class</th><th className="num">Value</th><th className="num">Realised P&L</th>
+                  <th className="num">Unrealised P&L</th><th className="num">Total P&L</th>
+                  <th className="num">XIRR</th><th className="num">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {CLASS_ORDER.filter((id) => portfolio.asset_classes[id]).map((id) => {
+                  const row = portfolio.asset_classes[id];
+                  return (
+                    <tr key={id} data-class={id}>
+                      <td><Link to={`/asset/${id}`}>{CLASS_NAMES[id]}</Link></td>
+                      <td className="num">{inr(row.value)}</td>
+                      <PnlCells row={row} />
+                      <td className="num"><Link to={`/asset/${id}`}>View</Link></td>
+                    </tr>
+                  );
+                })}
+                <tr data-class="cash">
+                  <td>Cash</td>
+                  <td className="num">{inr(total.cash_inr)}</td>
+                  <td className="num muted">N/A</td>
+                  <td className="num muted">N/A</td>
+                  <td className="num muted">N/A</td>
+                  <td className="num muted">N/A</td>
+                  <td className="num"><button className="link" onClick={() => setEditingCash(true)}>Update</button></td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr data-class="total">
+                  <td>TOTAL</td>
+                  <td className="num">{inr(total.value)}</td>
+                  <PnlCells row={total} />
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+        <div className="card">
+          <h2>Allocation</h2>
+          <AllocationDonut portfolio={portfolio} />
+        </div>
+      </section>
+
+      <section className="card">
+        {historyError && <p className="form-error">{historyError}</p>}
+        {!points && !historyError && <p className="muted">Loading history…</p>}
+        {points && <GrowthChart points={points} />}
+      </section>
+
+      {editingCash && <CashDialog cash={total.cash_inr} onClose={() => setEditingCash(false)} />}
+    </>
+  );
+}

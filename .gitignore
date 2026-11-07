@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+.gstack/
+# personal financial data
+data/
+docs/screenshots/
+# one-time migration scripts and their tests hold personal portfolio data
+backend/scripts/import_backup.py
+backend/scripts/phase2_fixes.py
+backend/scripts/verify_import.py
+backend/tests/test_personal_data.py
