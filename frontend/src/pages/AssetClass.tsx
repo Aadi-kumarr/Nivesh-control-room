@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { AddTransaction } from "../components/AddTransaction";
 import { InstrumentForm } from "../components/InstrumentForm";
 import { TransactionForm } from "../components/TransactionForm";
-import { Money, Percent, PriceBadge, SortableTable, Stat, Xirr } from "../components/common";
+import { ReturnCell, ReturnStat, useReturnHeading } from "../components/PeriodReturn";
+import { Money, Percent, PriceBadge, SortableTable, Stat } from "../components/common";
 import type { Column } from "../components/common";
 import { useData } from "../DataContext";
 import { CLASS_NAMES, inr, qty, signed, usd } from "../format";
@@ -31,7 +32,6 @@ const COLUMNS: Column<InstrumentRow>[] = [
   { key: "unrealised_pct", label: "Unrealised %", numeric: true, value: (r) => r.unrealised_pnl_pct, render: (r) => <Percent value={r.unrealised_pnl_pct} /> },
   { key: "realised", label: "Realised", numeric: true, value: (r) => r.realised_pnl, render: (r) => <Money value={r.realised_pnl} /> },
   { key: "pnl", label: "Total P&L", numeric: true, value: (r) => r.pnl, render: (r) => <Money value={r.pnl} /> },
-  { key: "xirr", label: "XIRR", numeric: true, value: (r) => r.xirr, render: (r) => <Xirr value={r.xirr} /> },
   { key: "status", label: "Status", value: (r) => r.price_source, render: (r) => <PriceBadge row={r} /> },
 ];
 
@@ -42,7 +42,7 @@ export function AssetClass() {
 }
 
 function AssetClassPage({ id }: { id: string }) {
-  const { portfolio, reload, addNotices } = useData();
+  const { portfolio, reload, addNotices, period, periodResult } = useData();
   const navigate = useNavigate();
   const [showClosed, setShowClosed] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -62,14 +62,27 @@ function AssetClassPage({ id }: { id: string }) {
     }
     return showClosed ? all : all.filter((row) => row.qty !== 0);
   }, [all, showClosed, query]);
-  const columns = useMemo<Column<InstrumentRow>[]>(() => [...COLUMNS, {
+  const returnHeading = useReturnHeading();
+  const columns = useMemo<Column<InstrumentRow>[]>(() => [...COLUMNS.slice(0, -1), {
+    key: "xirr",
+    label: returnHeading,
+    numeric: true,
+    // Sorts by the figure shown: XIRR for "All", otherwise the period's main figure.
+    value: (r) => {
+      if (period.preset === "All") return r.xirr;
+      const result = periodResult?.instruments[r.id];
+      if (!result) return null;
+      return periodResult!.days < 365 ? result.return_pct : result.xirr;
+    },
+    render: (r) => <ReturnCell xirr={r.xirr} pick={(p) => p.instruments[r.id]} />,
+  }, COLUMNS[COLUMNS.length - 1], {
     key: "action",
     label: "Action",
     value: () => null,
     render: (row) => (
       <button className="link" aria-label={`Add transaction for ${row.name}`} onClick={() => setTrading(row)}>+ Add</button>
     ),
-  }], []);
+  }], [period, periodResult, returnHeading]);
 
   if (!portfolio) return <p className="muted">Loading…</p>;
   const summary = portfolio.asset_classes[id];
@@ -98,7 +111,7 @@ function AssetClassPage({ id }: { id: string }) {
           <Stat label="Total P&L">
             <span className={signed(summary.pnl)} data-testid="class-pnl">{inr(summary.pnl)}</span>
           </Stat>
-          <Stat label="XIRR"><Xirr value={summary.xirr} /></Stat>
+          <ReturnStat label="XIRR" xirr={summary.xirr} pick={(p) => p.asset_classes[id]} testId="class-xirr" />
           <Stat label="Open positions">{all.length - closedCount}</Stat>
         </section>
       )}

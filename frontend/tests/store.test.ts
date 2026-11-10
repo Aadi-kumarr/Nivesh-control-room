@@ -27,6 +27,7 @@ function harness() {
     {
       portfolio: fetcher("portfolio"),
       history: fetcher("history"),
+      period: (profileId, start, end, signal) => fetcher(`period ${start}|${end ?? ""}`)(profileId, signal),
       backups: () => {
         calls.push("backups");
         return Promise.resolve({ profile: "-", n: 0 });
@@ -184,4 +185,43 @@ test("backups are fetched once and again only after a write", async () => {
   h.store.written(writeScope("PUT", "/cash", "B"));
   await h.store.backups();
   assert.deepEqual(h.calls, ["backups", "backups"]);
+});
+
+async function period(h: ReturnType<typeof harness>, start: string, end: string | null = null) {
+  const result = h.store.period(start, end);
+  await Promise.resolve();
+  const key = `period ${start}|${end ?? ""}:${h.store.active}`;
+  if (h.pending.some((p) => p.key === key)) h.answer(key);
+  return result;
+}
+
+test("period returns are fetched only when asked for, cached per profile and per period", async () => {
+  const h = harness();
+  await load(h, "A");
+  assert.deepEqual(h.calls, ["portfolio:A"]); // loading the dashboard asks for no period
+  assert.deepEqual(await period(h, "2025-11-11"), { profile: "A", n: 1 });
+  await period(h, "2025-11-11");
+  assert.equal(h.store.cachedPeriod("2025-11-11", null)?.profile, "A");
+  await period(h, "2026-08-11");
+  await load(h, "B");
+  assert.equal(h.store.cachedPeriod("2025-11-11", null), null); // A's result never shows under B
+  assert.deepEqual(await period(h, "2025-11-11"), { profile: "B", n: 1 });
+  await load(h, "A");
+  await period(h, "2025-11-11"); // back to A: from the cache
+  assert.deepEqual(h.calls, [
+    "portfolio:A", "period 2025-11-11|:A", "period 2026-08-11|:A", "portfolio:B", "period 2025-11-11|:B",
+  ]);
+});
+
+test("a write clears that profile's period returns, and they expire after 15 minutes", async () => {
+  const h = harness();
+  await load(h, "A");
+  await period(h, "2025-11-11");
+  h.store.written(writeScope("POST", "/transactions", "A"));
+  assert.equal(h.store.cachedPeriod("2025-11-11", null), null);
+  assert.deepEqual(await period(h, "2025-11-11"), { profile: "A", n: 2 });
+  h.tick(CACHE_MS);
+  assert.equal(h.store.cachedPeriod("2025-11-11", null), null);
+  await period(h, "2025-11-11");
+  assert.equal(h.calls.filter((c) => c.startsWith("period")).length, 3);
 });

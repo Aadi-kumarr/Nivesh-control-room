@@ -1,67 +1,109 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import { DRILLABLE, classSlices, holdingSlices } from "../allocation";
+import type { Slice } from "../allocation";
 import { CLASS_NAMES, CLASS_ORDER, dateLabel, inr, inrShort, monthLabel, percent } from "../format";
 import type { HistoryPoint, HistoryValues, Portfolio } from "../types";
 
-// Validated against the dark surface; each entity keeps its colour on every chart.
-const CLASS_COLORS: Record<string, string> = {
-  "indian-equities": "#3987e5",
-  "us-equities": "#d95926",
-  crypto: "#199e70",
-  fno: "#c98500",
-  cash: "#d55181",
-};
 const VALUE_COLOR = "#3987e5";
 const INVESTED_COLOR = "#d95926";
 const AXIS = { fill: "#93a0ae", fontSize: 12 };
 
+/** Asset classes; click one (or its legend name) to see its holdings. Back, "All" or Esc return. */
 export function AllocationDonut({ portfolio }: { portfolio: Portfolio }) {
-  const total = portfolio.portfolio.value;
-  const slices = [
-    ...CLASS_ORDER.map((id) => ({
-      id, name: CLASS_NAMES[id], value: portfolio.asset_classes[id]?.value ?? 0,
-    })),
-    { id: "cash", name: "Cash", value: portfolio.portfolio.cash_inr },
-  ].filter((slice) => slice.value > 0);
+  const [drill, setDrill] = useState<string | null>(null);
+  const root = classSlices(portfolio);
+  // A class drilled into can disappear (sold out, or another profile): show the top level then.
+  const classId = drill && root.some((slice) => slice.id === drill) ? drill : null;
+  const drilled = classId ? holdingSlices(portfolio, classId) : null;
+  const slices = drilled ? drilled.slices : root;
+  const base = drilled ? drilled.total : portfolio.portfolio.value;
+  const canDrill = (id: string) => !drilled && DRILLABLE.has(id);
+  const back = () => setDrill(null);
+
+  useEffect(() => {
+    if (!classId) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDrill(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [classId]);
 
   return (
-    <div className="donut">
-      <div className="donut-chart">
-        <ResponsiveContainer width="100%" height={230}>
-          <PieChart>
-            <Pie
-              data={slices} dataKey="value" nameKey="name" innerRadius="66%" outerRadius="96%"
-              stroke="#141a21" strokeWidth={2} startAngle={90} endAngle={-270} isAnimationActive={false}
-            >
-              {slices.map((slice) => <Cell key={slice.id} fill={CLASS_COLORS[slice.id]} />)}
-            </Pie>
-            <Tooltip
-              content={({ active, payload }) => {
-                const item = payload?.[0];
-                if (!active || !item) return null;
-                const value = Number(item.value);
-                return (
-                  <div className="tooltip">
-                    <strong>{item.name}</strong>
-                    <div>{inr(value)} · {percent(value / total)}</div>
-                  </div>
-                );
-              }}
-            />
-          </PieChart>
-        </ResponsiveContainer>
+    <div className="donut-wrap">
+      <div className="donut-nav">
+        {classId ? (
+          <>
+            <button type="button" className="button ghost small" onClick={back}>‹ Back</button>
+            <nav className="breadcrumb" aria-label="Allocation level">
+              <button type="button" className="link" onClick={back}>All</button>
+              <span aria-hidden="true"> › </span>
+              <span aria-current="page">{CLASS_NAMES[classId]}</span>
+            </nav>
+          </>
+        ) : <p className="muted small-text">Click an asset class to see its holdings.</p>}
       </div>
-      <ul className="legend">
-        {slices.map((slice) => (
-          <li key={slice.id}>
-            <span className="swatch" style={{ background: CLASS_COLORS[slice.id] }} />
-            <span>{slice.name}</span>
-            <span className="legend-value">{percent(slice.value / total)}</span>
-          </li>
-        ))}
-      </ul>
+      {/* Keyed by level, so each level fades in (.donut-level; off under reduced motion). */}
+      <div className="donut donut-level" key={classId ?? "all"} data-testid="allocation-donut" data-level={classId ?? "all"}>
+        <div className="donut-chart">
+          <ResponsiveContainer width="100%" height={230}>
+            <PieChart>
+              <Pie
+                data={slices} dataKey="value" nameKey="name" innerRadius="66%" outerRadius="96%"
+                stroke="#141a21" strokeWidth={2} startAngle={90} endAngle={-270} isAnimationActive={false}
+                onClick={(_, index) => {
+                  const slice = slices[index];
+                  if (slice && canDrill(slice.id)) setDrill(slice.id);
+                }}
+              >
+                {slices.map((slice) => (
+                  <Cell
+                    key={slice.id} fill={slice.color} data-slice={slice.id}
+                    style={{ cursor: canDrill(slice.id) ? "pointer" : "default", outline: "none" }}
+                  />
+                ))}
+              </Pie>
+              <Tooltip
+                content={({ active, payload }) => {
+                  const slice = payload?.[0]?.payload as Slice | undefined;
+                  if (!active || !slice) return null;
+                  return (
+                    <div className="tooltip">
+                      <strong>{slice.name}</strong>
+                      <div>{inr(slice.value)} · {percent(slice.value / base)}{classId ? ` of ${CLASS_NAMES[classId]}` : ""}</div>
+                      {slice.members && (
+                        <div className="muted">{slice.members.slice(0, 6).join(", ")}{slice.members.length > 6 ? "…" : ""}</div>
+                      )}
+                      {canDrill(slice.id) && <div className="muted">Click to see holdings</div>}
+                    </div>
+                  );
+                }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+          {drilled && classId && (
+            <button type="button" className="donut-center" onClick={back} title="Back to all asset classes">
+              <span>{CLASS_NAMES[classId]}</span>
+              <strong>{inrShort(drilled.total)}</strong>
+            </button>
+          )}
+        </div>
+        <ul className={`legend ${drilled ? "holdings" : ""}`}>
+          {(drilled ? drilled.legend : root).map((slice) => (
+            <li key={slice.id}>
+              <span className="swatch" style={{ background: slice.color }} />
+              {canDrill(slice.id)
+                ? <button type="button" className="link legend-name" onClick={() => setDrill(slice.id)}>{slice.name}</button>
+                : <span className="legend-name">{slice.name}</span>}
+              {drilled && <span className="legend-amount">{inr(slice.value)}</span>}
+              <span className="legend-value">{percent(slice.value / base)}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }

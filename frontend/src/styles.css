@@ -226,8 +226,8 @@ select.picker option { padding: 4px 6px; border-radius: 4px; }
 .profile-line b { color: var(--text); }
 .swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; }
 .swatches legend { font-size: 12px; color: var(--muted); margin-bottom: 4px; padding: 0; }
-.swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
-.swatch.selected { border-color: var(--text); }
+.swatches .swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.swatches .swatch.selected { border-color: var(--text); }
 .swatches input[type="color"] { width: 36px; height: 28px; padding: 2px; }
 .chart-placeholder { display: flex; align-items: center; justify-content: center; }
 .empty-state { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 32px; }
@@ -260,3 +260,66 @@ select.picker option { padding: 4px 6px; border-radius: 4px; }
   .banner { padding: 8px 16px; }
   .stat-value { font-size: 18px; }
 }
+
+/* Allocation donut drill-down */
+.donut-wrap { display: flex; flex-direction: column; gap: 8px; }
+.donut-nav { display: flex; align-items: center; gap: 10px; min-height: 26px; font-size: 13px; }
+.breadcrumb { color: var(--text-2); }
+.donut-chart { position: relative; }
+.donut-center {
+  all: unset; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; cursor: pointer; text-align: center;
+  font-size: 11px; color: var(--muted); max-width: 46%;
+}
+.donut-center strong { font: 600 15px var(--mono); color: var(--text); }
+.donut-center:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.legend-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend .link.legend-name { color: var(--text-2); }
+.legend .link.legend-name:hover { color: var(--text); }
+.legend.holdings { flex: 1 1 220px; max-height: 230px; overflow-y: auto; padding-right: 4px; font-size: 12px; gap: 4px; }
+.legend-amount { margin-left: auto; padding-left: 10px; font-family: var(--mono); color: var(--muted); }
+.legend.holdings .legend-value { margin-left: 0; padding-left: 10px; min-width: 58px; text-align: right; }
+.donut-level { animation: donut-in 350ms ease-out; }
+@keyframes donut-in {
+  from { opacity: 0; transform: scale(.96); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .donut-level { animation: none; }
+}
+
+/* Period returns */
+.return-stat { gap: 6px; }
+.label .info { margin-left: 4px; }
+.info {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border: 1px solid var(--muted); border-radius: 50%;
+  font: italic 600 10px/1 Georgia, serif; color: var(--muted); cursor: help; vertical-align: middle;
+}
+.info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.info-tip {
+  display: none; position: absolute; z-index: 20; top: 20px; left: -8px; width: 260px;
+  flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface-2); color: var(--text-2); font: 12px/1.4 var(--sans); text-transform: none; letter-spacing: 0;
+}
+.info:hover .info-tip, .info:focus .info-tip { display: flex; }
+.period-picker { display: flex; flex-direction: column; gap: 6px; }
+.period-buttons { display: inline-flex; flex-wrap: wrap; gap: 2px; }
+.period-button {
+  all: unset; padding: 1px 6px; border-radius: 4px; font-size: 11px; color: var(--muted); cursor: pointer;
+}
+.period-button:hover { color: var(--text); }
+.period-button.active { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+.period-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.period-custom { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; font-size: 11px; }
+.period-custom label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); }
+.period-custom input { font-size: 12px; padding: 2px 4px; }
+.period-custom .form-error { flex-basis: 100%; }
+.period-figure > div:first-child { font: 600 22px/1.3 var(--mono); overflow-wrap: anywhere; }
+.stats.six .period-figure > div:first-child { font-size: 17px; }
+.period-tag { font: 400 11px var(--sans); color: var(--muted); }
+.period-sub { display: flex; flex-wrap: wrap; gap: 4px 12px; font: 12px var(--mono); }
+.period-note { font-size: 11px; color: var(--muted); }
+.period-note.estimated { color: var(--warn); }
+.period-flag { color: var(--warn); }
+.period-range { font-size: 11px; }

@@ -58,6 +58,7 @@ cd backend
 | `GET /api/portfolio` | Value, P&L and XIRR; first refreshes the active profile's held instruments whose last attempt is over 15 minutes old |
 | `POST /api/prices/refresh` | Fetch prices from Yahoo now, for the active profile's held instruments |
 | `GET /api/history?interval=monthly` | Month-end value and net invested, total and per asset class |
+| `GET /api/xirr?start=YYYY-MM-DD&end=YYYY-MM-DD` | Returns for a time frame (end optional, default today), total, per asset class and per instrument |
 | `GET /api/fx?date=YYYY-MM-DD` | USDINR market rate and the rate used for that date |
 | `GET /api/symbols/check` | Preview a symbol's Yahoo price without saving |
 | `POST /api/transactions` | Add a transaction |
@@ -133,6 +134,42 @@ short holding can show a very big number or almost -100%. It shows `-` only when
 null: no trades, or cash that only flows one way. The API also returns `holding_days` (first buy
 to today, or to the last sell once nothing is held), which does not affect what's shown.
 
+## Returns for a time frame
+
+The XIRR cards and columns have a time-frame picker: 1M, 3M, 6M, 1Y, YTD (from Dec 31 of the
+previous year), All and a custom range. The choice is shared by the dashboard, asset-class and
+instrument pages. **All** is the existing all-time XIRR, unchanged and with no extra request.
+Any other choice asks `GET /api/xirr` once; the UI keeps the answer per profile and time frame
+for up to 15 minutes, and a write clears it like the portfolio.
+
+For a period from S to E, holdings on S are valued at that day's close (the last trading day
+before it when S is a holiday) and holdings on E at today's dashboard price, or that day's close
+for a past end date. The trades in between are the cash flows. Then:
+
+- ₹ gain = end value + sells - start value - buys.
+- Absolute return (Modified Dietz) = gain / (start value + each buy and sell weighted by the
+  share of the period it was invested; sells count negative). Money sold and bought back is
+  not counted twice. When nothing was at work it shows `—` and only the ₹ gain.
+- Annualised (XIRR) = the yearly rate for those flows, with the start value as the first one.
+  It uses the same solver as the all-time XIRR.
+
+Under a year the absolute return is the main figure (annualising a few weeks exaggerates it);
+from a year on, XIRR is. "from <date>" means the first trade was after S. Manual-price
+instruments, and Yahoo ones with no close near the date, are valued at their last trade price
+on or before it and listed as estimated.
+
+Daily closes are fetched once per symbol from Yahoo (only for instruments held on a past date)
+and cached in the `daily_closes` collection, which only grows to cover earlier dates. Like
+`price_history`, it is part of each snapshot.
+
+## Allocation donut
+
+Click an asset class on the dashboard donut (or its legend name) to see its holdings, one slice
+per instrument by current value. The 7 largest always get a slice; past those, holdings under 3%
+of the class are grouped as Others, and the legend lists every holding. Back, the "All"
+breadcrumb, the centre of the donut or Esc return. Cash is not drillable. It uses the portfolio
+already loaded, so drilling makes no request.
+
 ## Portfolio history
 
 Month-end values use Yahoo's monthly closes, converted back to the as-traded price where a later
@@ -167,7 +204,8 @@ cd backend
 
 Tests use mongomock and never touch the real database.
 
-The frontend's cache and profile-switch logic (`src/store.ts`) has its own tests, run by
+The frontend's cache and profile-switch logic (`src/store.ts`), time-frame dates
+(`src/periods.ts`) and donut grouping (`src/allocation.ts`) have their own tests, run by
 Node's built-in test runner (Node 22.18+, no extra packages):
 
 ```bat

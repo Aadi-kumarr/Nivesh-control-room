@@ -1,5 +1,6 @@
 import type {
-  Backups, Fx, History, Instrument, InstrumentDetail, InstrumentListItem, Portfolio, Profile, SymbolCheck,
+  Backups, Fx, History, Instrument, InstrumentDetail, InstrumentListItem, PeriodReturn, Portfolio, Profile,
+  SymbolCheck,
   Transaction, WriteResult,
 } from "./types";
 
@@ -78,6 +79,10 @@ export const api = {
   history: (profileId: string, signal?: AbortSignal) =>
     request<History>("/history?interval=monthly", "GET", undefined, { profileId, signal }),
   backups: (signal?: AbortSignal) => request<Backups>("/backups", "GET", undefined, { signal }),
+  periodReturn: (profileId: string, start: string, end: string | null, signal?: AbortSignal) =>
+    request<PeriodReturn>(
+      `/xirr?start=${start}${end ? `&end=${end}` : ""}`, "GET", undefined, { profileId, signal },
+    ),
   exportBackup: () => request<{ path: string }>("/export", "POST"),
   fx: (date: string) => request<Fx>(`/fx?date=${date}`),
   checkSymbol: (assetClass: string, symbol: string) =>

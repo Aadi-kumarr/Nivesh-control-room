@@ -53,6 +53,28 @@ export interface InstrumentListItem {
   asset_class: string;
 }
 
+export interface PeriodResult {
+  start_value: number;
+  end_value: number;
+  buys: number;
+  sells: number;
+  gain_inr: number;
+  /** Modified Dietz; null when no money was at work. */
+  return_pct: number | null;
+  xirr: number | null;
+  estimated: string[];
+  started_from: string | null;
+}
+
+export interface PeriodReturn {
+  start: string;
+  end: string;
+  days: number;
+  portfolio: PeriodResult;
+  asset_classes: Record<string, PeriodResult>;
+  instruments: Record<string, PeriodResult>;
+}
+
 export interface Portfolio {
   as_of: string;
   profile: { id: string; name: string };

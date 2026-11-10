@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app import backups, prices
 from app.db import get_db
 from app.history import build_history
+from app.periods import build_period
 from app.portfolio import instrument_view
 from app.profiles import Scope, get_scope
 
@@ -429,6 +430,23 @@ def check_symbol(asset_class: AssetClass, symbol: str):
 @router.get("/history")
 def get_history(interval: Literal["monthly"] = "monthly", scope: Scope = Depends(get_scope)):
     return build_history(scope)
+
+
+@router.get("/xirr")
+def get_period_return(
+    start: Annotated[str, Query()],
+    end: Annotated[Optional[str], Query()] = None,
+    scope: Scope = Depends(get_scope),
+):
+    """Returns for (start, end] for the active profile. end defaults to today."""
+    try:
+        start_day = date.fromisoformat(_check_date(start))
+        end_day = date.fromisoformat(_check_date(end)) if end else date.today()
+    except (TypeError, ValueError) as exc:
+        _reject(str(exc) if str(exc) else "dates must be YYYY-MM-DD")
+    if start_day >= end_day:
+        _reject("start must be before end.")
+    return build_period(scope, start_day, end_day)
 
 
 @router.get("/backups")

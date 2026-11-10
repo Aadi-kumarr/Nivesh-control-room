@@ -2,7 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from "react";
 import { api, isAbort, onWrite, setActiveProfileId } from "./api";
 import { createStore, writeScope } from "./store";
-import type { Backups, History, Portfolio, Profile } from "./types";
+import { ALL_PERIOD, periodDates } from "./periods";
+import type { PeriodChoice } from "./periods";
+import type { Backups, History, PeriodReturn, Portfolio, Profile } from "./types";
 
 const PROFILE_KEY = "nivesh.activeProfileId";
 
@@ -23,9 +25,10 @@ function storeProfileId(id: string) {
 }
 
 /** One store for the app: per-profile cache, aborts on switch, cleared by writes. */
-export const store = createStore<Portfolio, History, Backups>({
+export const store = createStore<Portfolio, History, Backups, PeriodReturn>({
   portfolio: (profileId, signal) => api.portfolio(profileId, signal),
   history: (profileId, signal) => api.history(profileId, signal),
+  period: (profileId, start, end, signal) => api.periodReturn(profileId, start, end, signal),
   backups: (signal) => api.backups(signal),
 });
 onWrite((method, path, profileId) => store.written(writeScope(method, path, profileId)));
@@ -46,6 +49,13 @@ interface Data {
   exportBackup: () => Promise<void>;
   addNotices: (messages: string[]) => void;
   dismissNotices: () => void;
+  /** One time frame shared by the dashboard, asset-class and instrument pages. */
+  period: PeriodChoice;
+  setPeriod: (choice: PeriodChoice) => void;
+  /** Returns for the chosen time frame; null for "All" (the existing XIRR is shown). */
+  periodResult: PeriodReturn | null;
+  periodLoading: boolean;
+  periodError: string | null;
 }
 
 const DataContext = createContext<Data | null>(null);
@@ -65,6 +75,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [notices, setNotices] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [period, setPeriod] = useState<PeriodChoice>(ALL_PERIOD);
+  const [periodResult, setPeriodResult] = useState<PeriodReturn | null>(null);
+  const [periodLoading, setPeriodLoading] = useState(false);
+  const [periodError, setPeriodError] = useState<string | null>(null);
 
   const loadBackups = useCallback(async () => {
     try {
@@ -125,6 +139,32 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (activeId) void load(false);
   }, [activeId, load]);
 
+  // Computed only when a time frame other than "All" is chosen. Runs again when the portfolio
+  // changes (a write or a price refresh), which is when the store has dropped the old result.
+  useEffect(() => {
+    const dates = periodDates(period);
+    setPeriodError(null);
+    if (!dates || !activeId || !portfolio) {
+      setPeriodResult(null);
+      setPeriodLoading(false);
+      return;
+    }
+    let current = true;
+    const cached = store.cachedPeriod(dates.start, dates.end);
+    setPeriodResult(cached);
+    setPeriodLoading(!cached);
+    store.period(dates.start, dates.end)
+      .then((result) => { if (current && result) setPeriodResult(result); })
+      .catch((error: Error) => {
+        if (current && !isAbort(error)) {
+          setPeriodResult(null);
+          setPeriodError(error.message);
+        }
+      })
+      .finally(() => { if (current) setPeriodLoading(false); });
+    return () => { current = false; };
+  }, [period, activeId, portfolio]);
+
   const addNotices = useCallback((messages: string[]) => {
     if (messages.length) setNotices((current) => [...current, ...messages]);
   }, []);
@@ -162,9 +202,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
       portfolio, backups, profiles, activeProfile, loadError, notices, refreshing, exporting,
       reload, reloadProfiles, switchProfile, refreshPrices, exportBackup, addNotices,
       dismissNotices: () => setNotices([]),
+      period, setPeriod, periodResult, periodLoading, periodError,
     }),
     [portfolio, backups, profiles, activeProfile, loadError, notices, refreshing, exporting,
-      reload, reloadProfiles, switchProfile, refreshPrices, exportBackup, addNotices],
+      reload, reloadProfiles, switchProfile, refreshPrices, exportBackup, addNotices,
+      period, periodResult, periodLoading, periodError],
   );
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }

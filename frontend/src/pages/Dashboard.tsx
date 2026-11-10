@@ -4,7 +4,8 @@ import { Link } from "react-router-dom";
 import { api, isAbort } from "../api";
 import { AddTransaction } from "../components/AddTransaction";
 import { ProfileLine } from "../components/ProfileMenu";
-import { Modal, Money, Percent, Stat, Xirr } from "../components/common";
+import { ReturnCell, ReturnStat, useReturnHeading } from "../components/PeriodReturn";
+import { Modal, Money, Percent, Stat } from "../components/common";
 import { store, useData } from "../DataContext";
 
 // The charting library is over half the app's code, so it loads only when a chart shows.
@@ -33,7 +34,7 @@ function useInView(element: HTMLElement | null): boolean {
   return seen;
 }
 import { CLASS_NAMES, CLASS_ORDER, inr, signed } from "../format";
-import type { HistoryPoint, Summary } from "../types";
+import type { HistoryPoint, PeriodResult, PeriodReturn, Summary } from "../types";
 
 function CashDialog({ cash, onClose }: { cash: number; onClose: () => void }) {
   const { reload, addNotices } = useData();
@@ -74,8 +75,8 @@ function CashDialog({ cash, onClose }: { cash: number; onClose: () => void }) {
   );
 }
 
-/** The Realised, Unrealised, Total and XIRR cells, shared by the class rows and TOTAL. */
-function PnlCells({ row }: { row: Summary }) {
+/** The Realised, Unrealised, Total and XIRR (or period return) cells, shared by the class rows and TOTAL. */
+function PnlCells({ row, pick }: { row: Summary; pick: (period: PeriodReturn) => PeriodResult | undefined }) {
   return (
     <>
       <td className="num"><Money value={row.realised_pnl} /></td>
@@ -86,7 +87,7 @@ function PnlCells({ row }: { row: Summary }) {
         )}
       </td>
       <td className="num"><Money value={row.pnl} /></td>
-      <td className="num"><Xirr value={row.xirr} /></td>
+      <td className="num"><ReturnCell xirr={row.xirr} pick={pick} /></td>
     </>
   );
 }
@@ -100,6 +101,7 @@ export function Dashboard() {
   const [historyCard, setHistoryCard] = useState<HTMLElement | null>(null);
   const historyVisible = useInView(historyCard);
   const asOf = portfolio?.as_of;
+  const returnHeading = useReturnHeading();
 
   // Only once the chart is on screen, and after the portfolio, so today's point uses the
   // same stored prices as the cards. The store caches it per profile for that portfolio.
@@ -149,11 +151,10 @@ export function Dashboard() {
         <Stat label="Unrealised P&L" sub={<span data-testid="total-unrealised-pct"><Percent value={total.unrealised_pnl_pct} /></span>}>
           <span className={signed(total.unrealised_pnl)} data-testid="total-unrealised">{inr(total.unrealised_pnl)}</span>
         </Stat>
-        <Stat label="Portfolio XIRR" sub={
-          <span className="muted small-text">Based on all cash flows and current portfolio value.</span>
-        }>
-          <span data-testid="total-xirr"><Xirr value={total.xirr} /></span>
-        </Stat>
+        <ReturnStat
+          label="Portfolio XIRR" xirr={total.xirr} pick={(p) => p.portfolio} testId="total-xirr"
+          sub={<span className="muted small-text">Based on all cash flows and current portfolio value.</span>}
+        />
       </section>
 
       <section className="split">
@@ -166,7 +167,7 @@ export function Dashboard() {
                 <tr>
                   <th>Asset class</th><th className="num">Value</th><th className="num">Realised P&L</th>
                   <th className="num">Unrealised P&L</th><th className="num">Total P&L</th>
-                  <th className="num">XIRR</th><th className="num">Action</th>
+                  <th className="num">{returnHeading}</th><th className="num">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -176,7 +177,7 @@ export function Dashboard() {
                     <tr key={id} data-class={id}>
                       <td><Link to={`/asset/${id}`}>{CLASS_NAMES[id]}</Link></td>
                       <td className="num">{inr(row.value)}</td>
-                      <PnlCells row={row} />
+                      <PnlCells row={row} pick={(p) => p.asset_classes[id]} />
                       <td className="num"><Link to={`/asset/${id}`}>View</Link></td>
                     </tr>
                   );
@@ -195,7 +196,7 @@ export function Dashboard() {
                 <tr data-class="total">
                   <td>TOTAL</td>
                   <td className="num">{inr(total.value)}</td>
-                  <PnlCells row={total} />
+                  <PnlCells row={total} pick={(p) => p.portfolio} />
                   <td />
                 </tr>
               </tfoot>

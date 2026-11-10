@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, isAbort } from "../api";
 import { InstrumentForm } from "../components/InstrumentForm";
 import { TransactionForm } from "../components/TransactionForm";
-import { ConfirmDialog, Percent, PriceBadge, Stat, Xirr } from "../components/common";
+import { ReturnStat } from "../components/PeriodReturn";
+import { ConfirmDialog, Percent, PriceBadge, Stat } from "../components/common";
 import { useData } from "../DataContext";
 import { CLASS_NAMES, dateLabel, inr, qty, signed, usd } from "../format";
 import type { InstrumentDetail, Transaction } from "../types";
@@ -111,7 +112,7 @@ export function InstrumentPage() {
         <Stat label="Total P&L">
           <span className={signed(summary.pnl)} data-testid="instrument-pnl">{inr(summary.pnl)}</span>
         </Stat>
-        <Stat label="XIRR"><span data-testid="instrument-xirr"><Xirr value={summary.xirr} /></span></Stat>
+        <ReturnStat label="XIRR" xirr={summary.xirr} pick={(p) => p.instruments[instrument.id]} testId="instrument-xirr" />
       </section>
 
       <section className="card">

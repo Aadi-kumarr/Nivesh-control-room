@@ -12,10 +12,12 @@
 
 export const CACHE_MS = 15 * 60 * 1000;
 
-export interface Fetchers<P, H, B> {
+export interface Fetchers<P, H, B, R = unknown> {
   portfolio: (profileId: string, signal: AbortSignal) => Promise<P>;
   history: (profileId: string, signal: AbortSignal) => Promise<H>;
   backups: (signal: AbortSignal) => Promise<B>;
+  /** Returns for a time frame; end null means today. */
+  period?: (profileId: string, start: string, end: string | null, signal: AbortSignal) => Promise<R>;
 }
 
 interface Entry<T> {
@@ -25,9 +27,11 @@ interface Entry<T> {
   key?: string;
 }
 
-interface ProfileCache<P, H> {
+interface ProfileCache<P, H, R> {
   portfolio?: Entry<P>;
   history?: Entry<H>;
+  /** Keyed by "start|end". */
+  periods?: Map<string, Entry<R>>;
 }
 
 export type WriteScope = { kind: "profile"; profileId: string } | { kind: "all" } | { kind: "none" };
@@ -45,8 +49,8 @@ export function writeScope(method: string, path: string, profileId: string | nul
   return { kind: "none" }; // export, profile create/rename: no portfolio data changes
 }
 
-export function createStore<P, H, B>(fetchers: Fetchers<P, H, B>, now: () => number = Date.now) {
-  const caches = new Map<string, ProfileCache<P, H>>();
+export function createStore<P, H, B, R = unknown>(fetchers: Fetchers<P, H, B, R>, now: () => number = Date.now) {
+  const caches = new Map<string, ProfileCache<P, H, R>>();
   // Bumped by every invalidation, so a response requested before a write is not cached.
   let generation = 0;
   let backups: Entry<B> | undefined;
@@ -117,6 +121,33 @@ export function createStore<P, H, B>(fetchers: Fetchers<P, H, B>, now: () => num
       return active === profileId ? data : null;
     },
 
+    /** Returns for (start, end] for the active profile, fetched only when asked for and
+     * cached per profile and period. end null means today, which uses today's prices,
+     * so like the portfolio it is kept for at most 15 minutes. */
+    async period(start: string, end: string | null): Promise<R | null> {
+      const profileId = active;
+      if (!profileId || !fetchers.period) return null;
+      const key = `${start}|${end ?? ""}`;
+      const cache = cacheFor(profileId);
+      const cached = cache.periods?.get(key);
+      if (cached && fresh(cached)) return cached.data;
+      const started = generation;
+      const data = await fetchers.period(profileId, start, end, controller.signal);
+      if (started === generation) {
+        const periods = cacheFor(profileId).periods ?? new Map<string, Entry<R>>();
+        periods.set(key, { data, at: now() });
+        cacheFor(profileId).periods = periods;
+      }
+      return active === profileId ? data : null;
+    },
+
+    /** Cached period result for the active profile, if any (shown at once on a switch). */
+    cachedPeriod(start: string, end: string | null): R | null {
+      if (!active) return null;
+      const cached = caches.get(active)?.periods?.get(`${start}|${end ?? ""}`);
+      return cached && fresh(cached) ? cached.data : null;
+    },
+
     /** Backups are not per profile: fetched once, and again after a write. */
     async backups(): Promise<B> {
       if (backups) return backups.data;
@@ -141,9 +172,9 @@ export function createStore<P, H, B>(fetchers: Fetchers<P, H, B>, now: () => num
     /** For tests and the profile menu. */
     hasCached(profileId: string) {
       const cache = caches.get(profileId);
-      return Boolean(cache?.portfolio || cache?.history);
+      return Boolean(cache?.portfolio || cache?.history || cache?.periods?.size);
     },
   };
 }
 
-export type Store<P, H, B> = ReturnType<typeof createStore<P, H, B>>;
+export type Store<P, H, B, R = unknown> = ReturnType<typeof createStore<P, H, B, R>>;
