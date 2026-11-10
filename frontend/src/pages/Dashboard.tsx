@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { AddTransaction } from "../components/AddTransaction";
 import { AllocationDonut, GrowthChart } from "../components/Charts";
+import { ProfileLine } from "../components/ProfileMenu";
 import { Modal, Money, Percent, Stat, Xirr } from "../components/common";
 import { useData } from "../DataContext";
 import { CLASS_NAMES, CLASS_ORDER, inr, signed } from "../format";
@@ -29,6 +31,7 @@ function CashDialog({ cash, onClose }: { cash: number; onClose: () => void }) {
 
   return (
     <Modal title="Update cash" onClose={onClose}>
+      <ProfileLine label="Cash for" />
       <form onSubmit={(event) => void save(event)}>
         <label>Cash (₹)
           <input type="number" min="0" step="any" value={text}
@@ -64,7 +67,8 @@ function PnlCells({ row }: { row: Summary }) {
 }
 
 export function Dashboard() {
-  const { portfolio } = useData();
+  const { portfolio, activeProfile, reload, addNotices } = useData();
+  const [addingTrade, setAddingTrade] = useState(false);
   const [points, setPoints] = useState<HistoryPoint[] | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [editingCash, setEditingCash] = useState(false);
@@ -82,6 +86,27 @@ export function Dashboard() {
 
   if (!portfolio) return <p className="muted">Loading portfolio…</p>;
   const total = portfolio.portfolio;
+
+  if (portfolio.instruments.length === 0) {
+    return (
+      <section className="card empty-state" data-testid="empty-state">
+        <h1>{activeProfile?.name ?? portfolio.profile.name} has no transactions yet</h1>
+        <p className="muted">Add a trade to start tracking this profile. Instruments and prices are shared,
+          so you can pick any instrument you already track or create a new one.</p>
+        <button className="button primary" onClick={() => setAddingTrade(true)}>Add first transaction</button>
+        {addingTrade && (
+          <AddTransaction
+            onClose={() => setAddingTrade(false)}
+            onSaved={(warnings) => {
+              addNotices(warnings);
+              setAddingTrade(false);
+              void reload();
+            }}
+          />
+        )}
+      </section>
+    );
+  }
 
   return (
     <>

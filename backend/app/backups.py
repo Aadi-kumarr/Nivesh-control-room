@@ -119,6 +119,13 @@ def export(db) -> Path:
         )
 
 
+def write_profile_backup(stem: str, text: str) -> Path:
+    """A deleted profile's data, to profiles/. Never pruned or mirrored. Raises on failure,
+    so the profile is only deleted once its backup is on disk."""
+    with _lock:
+        return _write_new(BACKUP_ROOT / "profiles", stem, text)
+
+
 def list_backups() -> dict:
     """Snapshots by folder, newest first. "manual" is the JSON directly in data/backups/."""
 
@@ -140,5 +147,6 @@ def list_backups() -> dict:
         "auto": describe(BACKUP_ROOT / "auto"),
         "daily": describe(BACKUP_ROOT / "daily"),
         "exports": describe(BACKUP_ROOT / "exports"),
+        "profiles": describe(BACKUP_ROOT / "profiles"),
         "manual": describe(BACKUP_ROOT),
     }

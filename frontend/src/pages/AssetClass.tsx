@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { AddTransaction } from "../components/AddTransaction";
 import { InstrumentForm } from "../components/InstrumentForm";
 import { TransactionForm } from "../components/TransactionForm";
 import { Money, Percent, PriceBadge, SortableTable, Stat, Xirr } from "../components/common";
@@ -45,6 +46,7 @@ function AssetClassPage({ id }: { id: string }) {
   const navigate = useNavigate();
   const [showClosed, setShowClosed] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [search, setSearch] = useState("");
   const [trading, setTrading] = useState<InstrumentRow | null>(null);
 
@@ -78,7 +80,10 @@ function AssetClassPage({ id }: { id: string }) {
     <>
       <div className="page-head">
         <h1>{CLASS_NAMES[id]}</h1>
-        <button className="button primary" onClick={() => setAdding(true)}>Add instrument</button>
+        <div className="actions">
+          <button className="button ghost" onClick={() => setPicking(true)}>Add transaction</button>
+          <button className="button primary" onClick={() => setAdding(true)}>Add instrument</button>
+        </div>
       </div>
 
       {summary && (
@@ -124,6 +129,17 @@ function AssetClassPage({ id }: { id: string }) {
           onSaved={(warnings) => {
             addNotices(warnings);
             setTrading(null);
+            void reload();
+          }}
+        />
+      )}
+      {picking && (
+        <AddTransaction
+          assetClass={id}
+          onClose={() => setPicking(false)}
+          onSaved={(warnings) => {
+            addNotices(warnings);
+            setPicking(false);
             void reload();
           }}
         />

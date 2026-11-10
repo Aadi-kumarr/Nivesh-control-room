@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useData } from "../DataContext";
 import { CLASS_NAMES, CLASS_ORDER, age } from "../format";
 import type { Backups } from "../types";
+import { ProfileMenu } from "./ProfileMenu";
 
 function lastBackup(backups: Backups | null): string {
   const times = [backups?.auto[0], backups?.daily[0], backups?.exports[0]]
@@ -16,7 +17,8 @@ function lastBackup(backups: Backups | null): string {
 
 export function Layout() {
   const {
-    portfolio, backups, loadError, notices, refreshing, exporting, refreshPrices, exportBackup, dismissNotices,
+    portfolio, backups, activeProfile, loadError, notices, refreshing, exporting, refreshPrices, exportBackup,
+    dismissNotices,
   } = useData();
   const fx = portfolio?.fx;
   const warnings = portfolio?.warnings ?? [];
@@ -58,6 +60,7 @@ export function Layout() {
           <button className="button primary" onClick={() => void refreshPrices()} disabled={refreshing}>
             {refreshing ? "Refreshing…" : "Refresh prices"}
           </button>
+          <ProfileMenu />
         </div>
       </header>
 
@@ -74,7 +77,9 @@ export function Layout() {
         </div>
       )}
 
-      <main className="page"><Outlet /></main>
+      {/* Keyed by profile: switching remounts the page, so it reloads everything and
+          closes any open form for the previous person. */}
+      <main className="page"><Outlet key={activeProfile?.id ?? "none"} /></main>
     </div>
   );
 }

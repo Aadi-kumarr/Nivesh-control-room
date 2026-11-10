@@ -37,8 +37,25 @@ export interface Fx {
   rate_date?: string;
 }
 
+export interface Profile {
+  id: string;
+  name: string;
+  colour: string;
+  is_default: boolean;
+  created_at: string;
+  transaction_count: number;
+}
+
+export interface InstrumentListItem {
+  id: string;
+  name: string;
+  symbol: string | null;
+  asset_class: string;
+}
+
 export interface Portfolio {
   as_of: string;
+  profile: { id: string; name: string };
   last_price_fetch: string | null;
   price_age_minutes: number | null;
   fx: Fx | null;
@@ -95,6 +112,7 @@ export interface Backups {
   auto: BackupFile[];
   daily: BackupFile[];
   exports: BackupFile[];
+  profiles?: BackupFile[];
   manual: BackupFile[];
 }
 

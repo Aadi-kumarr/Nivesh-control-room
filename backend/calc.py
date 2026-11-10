@@ -221,14 +221,15 @@ def instrument_summary(instrument, today=None):
     return summary
 
 
-def portfolio_summary(instruments, cash_inr=0, today=None):
-    """Totals per asset class and for the whole portfolio.
+def portfolio_summary(instruments, cash_inr=0, today=None, classes=()):
+    """Totals per asset class and for the whole portfolio. Every name in classes gets a
+    row, with zeros when it has no instruments.
 
     portfolio["value"] includes cash. P&L and XIRR do not: cash has no dated
     cash flows here, so counting it would show cash as profit.
     """
     today = today or date.today()
-    groups = defaultdict(list)
+    groups = defaultdict(list, {name: [] for name in classes})
     for instrument in instruments:
         groups[instrument["asset_class"]].append(
             _position(instrument["price_inr"], instrument["transactions"])

@@ -134,9 +134,9 @@ def _month_point(day: str, instruments: list, closes: dict, classes: list) -> di
     }
 
 
-def _today_point(db, today: date, classes: list) -> dict:
+def _today_point(scope, today: date, classes: list) -> dict:
     """Built from the same numbers as GET /api/portfolio, so it equals the dashboard."""
-    portfolio = build_portfolio(db, today)
+    portfolio = build_portfolio(scope, today)
     estimated = defaultdict(float)
     for row in portfolio["instruments"]:
         if row["qty"] != 0 and row["price_status"] != "live":
@@ -158,10 +158,12 @@ def _today_point(db, today: date, classes: list) -> dict:
     }
 
 
-def build_history(db, today=None) -> dict:
+def build_history(scope, today=None) -> dict:
+    """One profile's history. Closes in price_history are shared by all profiles."""
+    db = scope.db
     today = today or date.today()
     transactions = defaultdict(list)
-    for txn in db.transactions.find():
+    for txn in scope.transactions.find():
         transactions[txn["instrument_id"]].append(txn)
     instruments = [
         {"doc": doc, "transactions": sorted(transactions[doc["_id"]], key=lambda t: t["date"])}
@@ -181,5 +183,5 @@ def build_history(db, today=None) -> dict:
     classes = sorted({i["doc"]["asset_class"] for i in instruments})
     first = date.fromisoformat(min(i["transactions"][0]["date"] for i in instruments))
     points = [_month_point(day, instruments, closes, classes) for day in month_ends(first, today)]
-    points.append(_today_point(db, today, classes))
+    points.append(_today_point(scope, today, classes))
     return {"interval": "monthly", "points": points}

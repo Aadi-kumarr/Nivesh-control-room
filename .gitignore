@@ -9,6 +9,7 @@ frontend/dist/
 .gstack/
 # personal financial data
 data/
+data/backups/
 docs/screenshots/
 # one-time migration scripts and their tests hold personal portfolio data
 backend/scripts/import_backup.py

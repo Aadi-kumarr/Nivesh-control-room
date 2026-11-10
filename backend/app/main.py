@@ -12,6 +12,8 @@ from app import backups  # noqa: E402
 from app.api import router  # noqa: E402
 from app.db import get_db  # noqa: E402
 from app.portfolio import build_portfolio  # noqa: E402
+from app.profiles import Scope, get_scope  # noqa: E402
+from app.profiles import router as profiles_router  # noqa: E402
 from app.prices import refresh_if_stale, refresh_prices  # noqa: E402
 
 
@@ -25,6 +27,7 @@ def daily_snapshot(db=Depends(get_db)):
 
 app = FastAPI(title="Nivesh Control Room", dependencies=[Depends(daily_snapshot)])
 app.include_router(router)
+app.include_router(profiles_router)
 
 
 @app.get("/api/health")
@@ -45,9 +48,9 @@ def prices_refresh(db=Depends(get_db)):
 
 
 @app.get("/api/portfolio")
-def portfolio(db=Depends(get_db)):
-    refreshed = refresh_if_stale(db)
-    return {"refreshed": refreshed, **build_portfolio(db)}
+def portfolio(scope: Scope = Depends(get_scope)):
+    refreshed = refresh_if_stale(scope.db)  # shared prices, for instruments any profile holds
+    return {"refreshed": refreshed, **build_portfolio(scope)}
 
 
 @app.get("/{path:path}", include_in_schema=False)

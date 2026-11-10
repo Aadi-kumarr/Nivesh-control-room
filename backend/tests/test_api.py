@@ -204,7 +204,7 @@ def test_old_inr_us_transaction_stays_inr(client, db, us):
     db.transactions.insert_one({
         "_id": "old", "instrument_id": us, "date": "2025-01-01", "type": "BUY", "quantity": 1,
         "price_inr": 5000, "currency": "INR", "price_usd": None, "fx_rate_used": None,
-        "note": "", "kind": "trade",
+        "note": "", "kind": "trade", "profile_id": db.profiles.find_one()["_id"],
     })
     assert client.patch("/api/transactions/old", json={"price_usd": 60}).status_code == 422
     txn = client.patch("/api/transactions/old", json={"price_inr": 5100}).json()["transaction"]
@@ -398,7 +398,8 @@ def test_write_returns_updated_summary(client, indian):
 
 def test_cash(client, db):
     assert client.put("/api/cash", json={"cash_inr": 1234.5}).json()["cash_inr"] == 1234.5
-    assert db.settings.find_one({"_id": "portfolio"})["cash_inr"] == 1234.5
+    assert db.profiles.find_one({"is_default": True})["cash_inr"] == 1234.5
+    assert client.get("/api/portfolio").json()["portfolio"]["cash_inr"] == 1234.5
     assert client.put("/api/cash", json={"cash_inr": -1}).status_code == 422
 
 

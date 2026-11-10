@@ -1,5 +1,6 @@
 import type {
-  Backups, Fx, History, Instrument, InstrumentDetail, Portfolio, SymbolCheck, Transaction, WriteResult,
+  Backups, Fx, History, Instrument, InstrumentDetail, InstrumentListItem, Portfolio, Profile, SymbolCheck,
+  Transaction, WriteResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -26,10 +27,20 @@ function errorMessage(body: unknown, status: number): string {
   return `Request failed (${status}).`;
 }
 
+/** Sent on every request; the server scopes per-person data to it (unknown -> default). */
+let activeProfileId: string | null = null;
+
+export function setActiveProfileId(id: string | null) {
+  activeProfileId = id;
+}
+
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (activeProfileId) headers["X-Profile-Id"] = activeProfileId;
   const response = await fetch(`/api${path}`, {
     method,
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data: unknown = await response.json().catch(() => null);
@@ -50,6 +61,12 @@ export const api = {
     request<SymbolCheck>(
       `/symbols/check?asset_class=${assetClass}&symbol=${encodeURIComponent(symbol)}`,
     ),
+  profiles: () => request<{ profiles: Profile[] }>("/profiles"),
+  createProfile: (body: { name: string; colour: string }) =>
+    request<WriteResult & { profile: Profile }>("/profiles", "POST", body),
+  deleteProfile: (id: string) =>
+    request<WriteResult & { transactions_removed: number; profile_backup: string }>(`/profiles/${id}`, "DELETE"),
+  instruments: () => request<{ instruments: InstrumentListItem[] }>("/instruments"),
   instrument: (id: string) => request<InstrumentDetail>(`/instruments/${id}`),
   createInstrument: (body: object) => request<InstrumentResult>("/instruments", "POST", body),
   updateInstrument: (id: string, body: Partial<Instrument>) =>

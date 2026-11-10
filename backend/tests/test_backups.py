@@ -231,7 +231,7 @@ def test_restore_into_new_database(client, mongo, db, root, indian):
     name, counts = restore_backup.restore(mongo, path)
 
     assert name.startswith("nivesh_restore_")
-    assert counts == {"instruments": 1, "settings": 1, "transactions": 1}
+    assert counts == {"instruments": 1, "profiles": 1, "settings": 1, "transactions": 1}
     restored = mongo[name]
     assert list(restored.transactions.find()) == before
     assert restored.transactions.find_one()["quantity"] == 3

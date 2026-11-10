@@ -57,31 +57,35 @@ def _row(doc: dict, priced: dict, summary: dict, now) -> dict:
     }
 
 
-def instrument_view(db, doc: dict, today=None) -> dict:
-    """The same row GET /api/portfolio shows, for one instrument."""
+def instrument_view(scope, doc: dict, today=None) -> dict:
+    """The same row GET /api/portfolio shows, for one instrument, from the profile's trades."""
+    db = scope.db
     state = db.settings.find_one({"_id": STATE_ID}) or {}
     priced = valuation_price(doc, latest_fx(db), state.get("last_attempt_at"))
-    transactions = list(db.transactions.find({"instrument_id": doc["_id"]}))
+    transactions = list(scope.transactions.find({"instrument_id": doc["_id"]}))
     summary = instrument_summary(
         {"price_inr": priced["price_inr"], "transactions": transactions}, today or date.today()
     )
     return _row(doc, priced, summary, datetime.now(timezone.utc))
 
 
-def build_portfolio(db, today=None) -> dict:
+def build_portfolio(scope, today=None) -> dict:
+    """One profile's portfolio. Only instruments that profile has traded are listed."""
+    db = scope.db
     today = today or date.today()
     now = datetime.now(timezone.utc)
     fx = latest_fx(db)
     state = db.settings.find_one({"_id": STATE_ID}) or {}
     last_attempt = state.get("last_attempt_at")
-    cash = db.settings.find_one({"_id": "portfolio"})["cash_inr"]
+    cash = scope.cash_inr
 
     transactions = defaultdict(list)
-    for txn in db.transactions.find():
+    for txn in scope.transactions.find():
         transactions[txn["instrument_id"]].append(txn)
 
     instruments, rows, warnings = [], [], []
-    for doc in db.instruments.find().sort([("asset_class", 1), ("name", 1)]):
+    traded = {"_id": {"$in": list(transactions)}}
+    for doc in db.instruments.find(traded).sort([("asset_class", 1), ("name", 1)]):
         priced = valuation_price(doc, fx, last_attempt)
         instrument = {
             "asset_class": doc["asset_class"],
@@ -105,7 +109,9 @@ def build_portfolio(db, today=None) -> dict:
     if not last_attempt:
         warnings.append("Prices have never been fetched")
 
-    totals = portfolio_summary(instruments, cash, today)
+    # Every class that has instruments gets a row, traded by this profile or not.
+    classes = sorted(db.instruments.distinct("asset_class"))
+    totals = portfolio_summary(instruments, cash, today, classes)
     return {
         "as_of": now.isoformat(),
         "last_price_fetch": _utc(last_attempt).isoformat() if last_attempt else None,
@@ -117,6 +123,7 @@ def build_portfolio(db, today=None) -> dict:
             "age_minutes": _age_minutes(fx["fetched_at"], now),
         },
         "warnings": warnings,
+        "profile": {"id": scope.profile["_id"], "name": scope.profile["name"]},
         "portfolio": totals["portfolio"],
         "asset_classes": totals["asset_classes"],
         "instruments": rows,

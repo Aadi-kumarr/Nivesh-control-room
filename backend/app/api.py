@@ -1,5 +1,8 @@
 """Write APIs, FX lookup and backup endpoints.
 
+Per-person routes take a Scope from profiles.get_scope: its transactions and cash belong
+to the active profile only. Instruments, prices and FX are shared.
+
 Every write runs under WRITE_LOCK, so the holdings check, the write and the snapshot
 can't interleave with another request. After it succeeds, a snapshot is taken.
 """
@@ -18,6 +21,7 @@ from app import backups, prices
 from app.db import get_db
 from app.history import build_history
 from app.portfolio import instrument_view
+from app.profiles import Scope, get_scope
 
 router = APIRouter(prefix="/api")
 WRITE_LOCK = threading.RLock()
@@ -99,8 +103,9 @@ def _instrument(db, instrument_id: str) -> dict:
     )
 
 
-def _transaction(db, transaction_id: str) -> dict:
-    return db.transactions.find_one({"_id": transaction_id}) or _reject(
+def _transaction(scope: Scope, transaction_id: str) -> dict:
+    """Only the active profile's transactions are found; anyone else's is a 404."""
+    return scope.transactions.find_one({"_id": transaction_id}) or _reject(
         f"Transaction {transaction_id} not found.", 404
     )
 
@@ -156,18 +161,19 @@ def _usd_fields(price_usd: float, day: str, override: Optional[float]) -> dict:
     }
 
 
-def _finish(db, instrument: Optional[dict], **fields) -> dict:
+def _finish(scope: Scope, instrument: Optional[dict], **fields) -> dict:
     """Take the snapshot and build the response for a successful write."""
+    db = scope.db
     backup = backups.after_write(db)
     if instrument is not None:
-        fields["instrument"] = instrument_view(db, db.instruments.find_one({"_id": instrument["_id"]}))
+        fields["instrument"] = instrument_view(scope, db.instruments.find_one({"_id": instrument["_id"]}))
     return {**fields, "backup": backup["file"], "warnings": backup["warnings"]}
 
 
 @router.post("/transactions", status_code=201)
-def create_transaction(body: TransactionCreate, db=Depends(get_db)):
+def create_transaction(body: TransactionCreate, scope: Scope = Depends(get_scope)):
     with WRITE_LOCK:
-        instrument = _instrument(db, body.instrument_id)
+        instrument = _instrument(scope.db, body.instrument_id)
         doc = {
             "_id": str(uuid.uuid4()),
             "instrument_id": instrument["_id"],
@@ -189,17 +195,20 @@ def create_transaction(body: TransactionCreate, db=Depends(get_db)):
                 currency="INR", price_inr=body.price_inr, price_usd=None,
                 fx_rate_market=None, fx_rate_used=None, fx_override=False,
             )
-        existing = list(db.transactions.find({"instrument_id": instrument["_id"]}))
+        doc["profile_id"] = scope.profile["_id"]
+        existing = list(scope.transactions.find({"instrument_id": instrument["_id"]}))
         _check_holdings(existing + [doc])
-        db.transactions.insert_one(doc)
-        return _finish(db, instrument, transaction=_public(doc))
+        scope.transactions.insert_one(doc)
+        return _finish(scope, instrument, transaction=_public(doc))
 
 
 @router.patch("/transactions/{transaction_id}")
-def update_transaction(transaction_id: str, body: TransactionUpdate, db=Depends(get_db)):
+def update_transaction(
+    transaction_id: str, body: TransactionUpdate, scope: Scope = Depends(get_scope)
+):
     with WRITE_LOCK:
-        current = _transaction(db, transaction_id)
-        instrument = _instrument(db, current["instrument_id"])
+        current = _transaction(scope, transaction_id)
+        instrument = _instrument(scope.db, current["instrument_id"])
         changes = body.model_dump(exclude_unset=True)
         if not changes:
             _reject("Nothing to change.")
@@ -232,26 +241,26 @@ def update_transaction(transaction_id: str, body: TransactionUpdate, db=Depends(
         elif changes.keys() & {"price_usd", "fx_rate_used"}:
             _reject("This transaction is in INR: edit price_inr.")
 
-        others = list(db.transactions.find(
+        others = list(scope.transactions.find(
             {"instrument_id": instrument["_id"], "_id": {"$ne": transaction_id}}
         ))
         _check_holdings(others + [updated])
-        db.transactions.replace_one({"_id": transaction_id}, updated)
-        result = _finish(db, instrument, transaction=_public(updated))
+        scope.transactions.replace_one({"_id": transaction_id}, updated)
+        result = _finish(scope, instrument, transaction=_public(updated))
         result["warnings"] = warnings + result["warnings"]
         return result
 
 
 @router.delete("/transactions/{transaction_id}")
-def delete_transaction(transaction_id: str, db=Depends(get_db)):
+def delete_transaction(transaction_id: str, scope: Scope = Depends(get_scope)):
     with WRITE_LOCK:
-        current = _transaction(db, transaction_id)
-        instrument = _instrument(db, current["instrument_id"])
-        _check_holdings(list(db.transactions.find(
+        current = _transaction(scope, transaction_id)
+        instrument = _instrument(scope.db, current["instrument_id"])
+        _check_holdings(list(scope.transactions.find(
             {"instrument_id": instrument["_id"], "_id": {"$ne": transaction_id}}
         )))
-        db.transactions.delete_one({"_id": transaction_id})
-        return _finish(db, instrument, deleted=transaction_id)
+        scope.transactions.delete_one({"_id": transaction_id})
+        return _finish(scope, instrument, deleted=transaction_id)
 
 
 def _check_name_free(db, asset_class: str, name: str, own_id: Optional[str] = None) -> None:
@@ -274,7 +283,8 @@ def _live_price_fields(symbol: str, quote_currency: str) -> dict:
 
 
 @router.post("/instruments", status_code=201)
-def create_instrument(body: InstrumentCreate, db=Depends(get_db)):
+def create_instrument(body: InstrumentCreate, scope: Scope = Depends(get_scope)):
+    db = scope.db
     with WRITE_LOCK:
         name = body.name.strip()
         if not name:
@@ -300,24 +310,32 @@ def create_instrument(body: InstrumentCreate, db=Depends(get_db)):
         if body.price_source == "yahoo":
             doc.update(_live_price_fields(symbol, quote_currency))
         db.instruments.insert_one(doc)
-        return _finish(db, doc)
+        return _finish(scope, doc)
+
+
+@router.get("/instruments")
+def list_instruments(db=Depends(get_db)):
+    """Every instrument, shared by all profiles: lets any profile trade one it hasn't yet."""
+    docs = db.instruments.find({}, {"name": 1, "symbol": 1, "asset_class": 1})
+    return {"instruments": [_public(doc) for doc in docs.sort([("asset_class", 1), ("name", 1)])]}
 
 
 @router.get("/instruments/{instrument_id}")
-def get_instrument(instrument_id: str, db=Depends(get_db)):
-    doc = _instrument(db, instrument_id)
-    transactions = db.transactions.find({"instrument_id": instrument_id})
+def get_instrument(instrument_id: str, scope: Scope = Depends(get_scope)):
+    doc = _instrument(scope.db, instrument_id)
+    transactions = scope.transactions.find({"instrument_id": instrument_id})
     # Newest first. A day's BUYs count before its SELLs, so its SELLs are the later ones.
     newest_first = sorted(transactions, key=lambda t: (t["date"], t["type"] == "SELL"), reverse=True)
     return {
         "instrument": _public(doc),
         "transactions": [_public(t) for t in newest_first],
-        "summary": instrument_view(db, doc),
+        "summary": instrument_view(scope, doc),
     }
 
 
 @router.patch("/instruments/{instrument_id}")
-def update_instrument(instrument_id: str, body: InstrumentUpdate, db=Depends(get_db)):
+def update_instrument(instrument_id: str, body: InstrumentUpdate, scope: Scope = Depends(get_scope)):
+    db = scope.db
     with WRITE_LOCK:
         doc = _instrument(db, instrument_id)
         changes = body.model_dump(exclude_unset=True)
@@ -347,27 +365,29 @@ def update_instrument(instrument_id: str, body: InstrumentUpdate, db=Depends(get
             changes.update(last_price=None, last_price_currency=None, price_updated_at=None)
 
         db.instruments.update_one({"_id": doc["_id"]}, {"$set": changes})
-        return _finish(db, {**doc, **changes})
+        return _finish(scope, {**doc, **changes})
 
 
 @router.delete("/instruments/{instrument_id}")
-def delete_instrument(instrument_id: str, db=Depends(get_db)):
+def delete_instrument(instrument_id: str, scope: Scope = Depends(get_scope)):
+    db = scope.db
     with WRITE_LOCK:
         doc = _instrument(db, instrument_id)
+        # Instruments are shared, so this counts every profile's transactions on purpose.
         count = db.transactions.count_documents({"instrument_id": instrument_id})
         if count:
-            _reject(f"{doc['name']} has {count} transactions. Delete them first.", 409)
+            mine = scope.transactions.count_documents({"instrument_id": instrument_id})
+            others = f" ({count - mine} in other profiles)" if count != mine else ""
+            _reject(f"{doc['name']} has {count} transactions{others}. Delete them first.", 409)
         db.instruments.delete_one({"_id": instrument_id})
-        return _finish(db, None, deleted=instrument_id)
+        return _finish(scope, None, deleted=instrument_id)
 
 
 @router.put("/cash")
-def update_cash(body: CashUpdate, db=Depends(get_db)):
+def update_cash(body: CashUpdate, scope: Scope = Depends(get_scope)):
     with WRITE_LOCK:
-        db.settings.update_one(
-            {"_id": "portfolio"}, {"$set": {"cash_inr": body.cash_inr}}, upsert=True
-        )
-        return _finish(db, None, cash_inr=body.cash_inr)
+        scope.set_cash(body.cash_inr)
+        return _finish(scope, None, cash_inr=body.cash_inr)
 
 
 @router.get("/fx")
@@ -394,8 +414,8 @@ def check_symbol(asset_class: AssetClass, symbol: str):
 
 
 @router.get("/history")
-def get_history(interval: Literal["monthly"] = "monthly", db=Depends(get_db)):
-    return build_history(db)
+def get_history(interval: Literal["monthly"] = "monthly", scope: Scope = Depends(get_scope)):
+    return build_history(scope)
 
 
 @router.get("/backups")

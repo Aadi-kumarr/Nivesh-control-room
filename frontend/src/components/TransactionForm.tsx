@@ -4,6 +4,7 @@ import { api } from "../api";
 import { inr, todayIso } from "../format";
 import type { Fx, Instrument, Transaction } from "../types";
 import { Modal } from "./common";
+import { ProfileLine } from "./ProfileMenu";
 
 type FxState = { state: "idle" | "loading" | "failed" } | { state: "ok"; fx: Fx };
 
@@ -92,6 +93,7 @@ export function TransactionForm({ instrument, transaction, onClose, onSaved }: {
 
   return (
     <Modal title={`${transaction ? "Edit" : "Add"} transaction: ${instrument.name}`} onClose={onClose}>
+      <ProfileLine label={transaction ? "Editing in" : "Adding to"} />
       <form onSubmit={(event) => void submit(event)}>
         <div className="form-row">
           <label>Date

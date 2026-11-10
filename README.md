@@ -51,6 +51,10 @@ cd backend
 | Method and path | Purpose |
 | --- | --- |
 | `GET /api/health` | Health check |
+| `GET /api/profiles` | List profiles (default first) with their transaction counts |
+| `POST /api/profiles` | Add a profile: `name` (unique, ignoring case) and `colour` (`#rrggbb`) |
+| `PATCH`, `DELETE /api/profiles/{id}` | Rename or recolour; delete (not the default) after saving a backup |
+| `GET /api/instruments` | Every instrument, shared by all profiles |
 | `GET /api/portfolio` | Value, P&L and XIRR; refreshes prices if the last fetch is over 15 minutes old |
 | `POST /api/prices/refresh` | Fetch prices from Yahoo now |
 | `GET /api/history?interval=monthly` | Month-end value and net invested, total and per asset class |
@@ -65,6 +69,29 @@ cd backend
 | `POST /api/export` | Save a full snapshot to `data/backups/exports/` |
 
 Interactive docs: http://localhost:8000/docs
+
+## Profiles
+
+Each person's transactions and cash belong to a profile. Instruments, prices, price history
+and FX are shared, and the `FX_DISCOUNT_INR` rule applies to every profile.
+
+- Per-person routes read the `X-Profile-Id` header through one dependency,
+  `profiles.get_scope`. A missing or unknown id means the default profile. Its
+  `transactions` only ever see that profile's documents, and `tests/test_profiles.py`
+  fails if app code queries `db.transactions` directly.
+- A profile lists only the instruments it has traded. **Add transaction** (asset class page,
+  or **Add first transaction** on an empty dashboard) picks from every instrument.
+- The default profile can't be deleted. Deleting another one first saves it and its
+  transactions to `data/backups/profiles/`, then removes them.
+- The UI remembers the last profile in `localStorage` (`nivesh.activeProfileId`).
+
+To add profiles to a database from before this feature, run this once from `backend/`.
+It takes a full `mongodump` into `data/backups/pre-profiles-<timestamp>/` first, only adds
+fields and documents, and is safe to run again:
+
+```bat
+.venv\Scripts\python scripts\migrate_profiles.py
+```
 
 ## USD transactions
 
@@ -100,6 +127,7 @@ the same numbers as `GET /api/portfolio`, including cash; earlier points have no
 
 ## Backups
 
+- Deleting a profile saves its data to `data/backups/profiles/` first (never pruned).
 - Every API write saves a snapshot to `data/backups/auto/` (newest 50 kept).
 - The first API use each day saves one to `data/backups/daily/` (newest 365 kept).
 - **Export backup** saves a snapshot to `data/backups/exports/`. These are never deleted or

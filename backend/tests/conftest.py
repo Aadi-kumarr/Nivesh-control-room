@@ -16,7 +16,7 @@ import mongomock  # noqa: E402
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import backups, prices  # noqa: E402
+from app import backups, prices, profiles  # noqa: E402
 from app.db import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -30,7 +30,13 @@ def mongo():
 def db(mongo):
     database = mongo["nivesh_test"]
     database.settings.insert_one({"_id": "portfolio", "cash_inr": 0})
+    profiles.migrate(database)
     return database
+
+
+@pytest.fixture
+def scope(db):
+    return profiles.scope_for(db)
 
 
 @pytest.fixture

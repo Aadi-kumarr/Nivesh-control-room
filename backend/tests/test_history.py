@@ -26,6 +26,7 @@ def txn(db, instrument_id, day, kind, quantity, price):
     db.transactions.insert_one({
         "_id": f"{instrument_id}-{day}-{kind}", "instrument_id": instrument_id, "date": day,
         "type": kind, "quantity": quantity, "price_inr": price, "note": "", "kind": "trade",
+        "profile_id": db.profiles.find_one({"is_default": True})["_id"],
     })
 
 
@@ -52,13 +53,13 @@ def test_month_ends():
     assert history.month_ends(date(2026, 3, 1), TODAY) == []
 
 
-def test_value_and_net_invested_per_month(db, closes):
+def test_value_and_net_invested_per_month(db, scope, closes):
     instrument(db, "A", symbol="A.NS", source="yahoo")
     txn(db, "A", "2026-01-10", "BUY", 10, 100)
     txn(db, "A", "2026-02-10", "SELL", 4, 120)
     closes["A.NS"] = {"2026-01": 110.0, "2026-02": 130.0}
 
-    result = history.build_history(db, TODAY)
+    result = history.build_history(scope, TODAY)
 
     assert [p["date"] for p in result["points"]] == ["2026-01-31", "2026-02-28", "2026-03-15"]
     january, february = result["points"][:2]
@@ -67,35 +68,35 @@ def test_value_and_net_invested_per_month(db, closes):
     assert february["asset_classes"]["indian-equities"]["value"] == 780.0
 
 
-def test_usd_uses_that_months_rate_minus_discount(db, closes, monkeypatch):
+def test_usd_uses_that_months_rate_minus_discount(db, scope, closes, monkeypatch):
     monkeypatch.setenv("FX_DISCOUNT_INR", "1")
     instrument(db, "U", "us-equities", "U", "yahoo", currency="USD")
     txn(db, "U", "2026-01-10", "BUY", 2, 9000)
     closes["U"] = {"2026-01": 100.0, "2026-02": 110.0}
     closes[prices.FX_SYMBOL] = {"2026-01": 91.0, "2026-02": 96.0}
 
-    result = history.build_history(db, TODAY)
+    result = history.build_history(scope, TODAY)
 
     assert point(result, "2026-01-31")["value"] == 2 * 100 * 90
     assert point(result, "2026-02-28")["value"] == 2 * 110 * 95
 
 
-def test_usd_without_a_rate_is_estimated(db, closes):
+def test_usd_without_a_rate_is_estimated(db, scope, closes):
     instrument(db, "U", "us-equities", "U", "yahoo", currency="USD")
     txn(db, "U", "2026-01-10", "BUY", 2, 9000)
     closes["U"] = {"2026-01": 100.0}
 
-    january = point(history.build_history(db, TODAY), "2026-01-31")
+    january = point(history.build_history(scope, TODAY), "2026-01-31")
 
     assert (january["value"], january["estimated"]) == (18000.0, True)
 
 
-def test_manual_uses_last_trade_and_is_estimated(db, closes):
+def test_manual_uses_last_trade_and_is_estimated(db, scope, closes):
     instrument(db, "M", manual=999)
     txn(db, "M", "2026-01-10", "BUY", 3, 100)
     txn(db, "M", "2026-02-05", "BUY", 1, 140)
 
-    result = history.build_history(db, TODAY)
+    result = history.build_history(scope, TODAY)
 
     january, february = result["points"][:2]
     assert (january["value"], january["estimated"], january["estimated_value"]) == (300.0, True, 300.0)
@@ -103,40 +104,40 @@ def test_manual_uses_last_trade_and_is_estimated(db, closes):
     assert january["asset_classes"]["indian-equities"]["estimated"] is True
 
 
-def test_symbol_with_no_history_is_estimated(db, closes):
+def test_symbol_with_no_history_is_estimated(db, scope, closes):
     instrument(db, "N", symbol="N.NS", source="yahoo")
     txn(db, "N", "2026-01-10", "BUY", 3, 100)
-    assert point(history.build_history(db, TODAY), "2026-01-31")["estimated"] is True
+    assert point(history.build_history(scope, TODAY), "2026-01-31")["estimated"] is True
 
 
-def test_month_before_listing_is_estimated_then_real(db, closes):
+def test_month_before_listing_is_estimated_then_real(db, scope, closes):
     instrument(db, "L", symbol="L.NS", source="yahoo")
     txn(db, "L", "2026-01-10", "BUY", 3, 100)
     closes["L.NS"] = {"2026-02": 200.0}
-    result = history.build_history(db, TODAY)
+    result = history.build_history(scope, TODAY)
     assert point(result, "2026-01-31")["estimated"] is True
     assert point(result, "2026-02-28")["estimated"] is False
     assert point(result, "2026-02-28")["value"] == 600.0
 
 
-def test_closed_position_keeps_its_net_invested_but_no_value(db, closes):
+def test_closed_position_keeps_its_net_invested_but_no_value(db, scope, closes):
     instrument(db, "C")
     txn(db, "C", "2026-01-10", "BUY", 3, 100)
     txn(db, "C", "2026-01-20", "SELL", 3, 150)
-    january = point(history.build_history(db, TODAY), "2026-01-31")
+    january = point(history.build_history(scope, TODAY), "2026-01-31")
     assert (january["value"], january["net_invested"], january["estimated"]) == (0.0, -150.0, False)
 
 
-def test_today_point_equals_the_dashboard(db, closes):
-    db.settings.update_one({"_id": "portfolio"}, {"$set": {"cash_inr": 250}})
+def test_today_point_equals_the_dashboard(db, scope, closes):
+    scope.set_cash(250)
     instrument(db, "A", symbol="A.NS", source="yahoo", manual=120)
     instrument(db, "M", "crypto", manual=50)
     txn(db, "A", "2026-01-10", "BUY", 10, 100)
     txn(db, "M", "2026-01-10", "BUY", 2, 40)
     closes["A.NS"] = {"2026-01": 110.0}
 
-    result = history.build_history(db, TODAY)
-    dashboard = build_portfolio(db, TODAY)
+    result = history.build_history(scope, TODAY)
+    dashboard = build_portfolio(scope, TODAY)
 
     last = result["points"][-1]
     assert last["date"] == "2026-03-15"
@@ -144,28 +145,28 @@ def test_today_point_equals_the_dashboard(db, closes):
     assert last["asset_classes"]["crypto"]["value"] == dashboard["asset_classes"]["crypto"]["value"]
 
 
-def test_cache_means_one_fetch_per_symbol_per_month(db, closes):
+def test_cache_means_one_fetch_per_symbol_per_month(db, scope, closes):
     instrument(db, "A", symbol="A.NS", source="yahoo")
     txn(db, "A", "2026-01-10", "BUY", 1, 100)
     closes["A.NS"] = {"2026-01": 110.0}
 
-    history.build_history(db, TODAY)
-    history.build_history(db, TODAY)
+    history.build_history(scope, TODAY)
+    history.build_history(scope, TODAY)
     assert closes["calls"] == ["A.NS"]
     assert db.price_history.find_one({"_id": "A.NS"})["closes"] == {"2026-01": 110.0}
 
-    history.build_history(db, date(2026, 4, 2))
+    history.build_history(scope, date(2026, 4, 2))
     assert closes["calls"] == ["A.NS", "A.NS"]
 
 
-def test_failed_fetch_keeps_the_cache(db, closes, monkeypatch):
+def test_failed_fetch_keeps_the_cache(db, scope, closes, monkeypatch):
     instrument(db, "A", symbol="A.NS", source="yahoo")
     txn(db, "A", "2026-01-10", "BUY", 1, 100)
     closes["A.NS"] = {"2026-01": 110.0}
-    history.build_history(db, TODAY)
+    history.build_history(scope, TODAY)
 
     monkeypatch.setattr(history, "fetch_monthly", lambda symbol: None)
-    result = history.build_history(db, date(2026, 4, 2))
+    result = history.build_history(scope, date(2026, 4, 2))
 
     assert point(result, "2026-01-31")["value"] == 110.0
 
@@ -194,8 +195,8 @@ def test_history_endpoint(client, closes, db):
     assert client.get("/api/history", params={"interval": "weekly"}).status_code == 422
 
 
-def test_empty_database_has_no_points(db, closes):
-    assert history.build_history(db, TODAY)["points"] == []
+def test_empty_database_has_no_points(db, scope, closes):
+    assert history.build_history(scope, TODAY)["points"] == []
 
 
 # Other Phase 4 API additions
