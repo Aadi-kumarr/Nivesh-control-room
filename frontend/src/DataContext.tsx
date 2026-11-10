@@ -1,7 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { api, setActiveProfileId } from "./api";
-import type { Backups, Portfolio, Profile } from "./types";
+import { api, isAbort, onWrite, setActiveProfileId } from "./api";
+import { createStore, writeScope } from "./store";
+import type { Backups, History, Portfolio, Profile } from "./types";
 
 const PROFILE_KEY = "nivesh.activeProfileId";
 
@@ -20,6 +21,14 @@ function storeProfileId(id: string) {
     // Private windows can block storage; the app still works, it just won't remember.
   }
 }
+
+/** One store for the app: per-profile cache, aborts on switch, cleared by writes. */
+export const store = createStore<Portfolio, History, Backups>({
+  portfolio: (profileId, signal) => api.portfolio(profileId, signal),
+  history: (profileId, signal) => api.history(profileId, signal),
+  backups: (signal) => api.backups(signal),
+});
+onWrite((method, path, profileId) => store.written(writeScope(method, path, profileId)));
 
 interface Data {
   portfolio: Portfolio | null;
@@ -56,23 +65,32 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [notices, setNotices] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
-  // Responses for a profile that is no longer active are dropped.
-  const activeRef = useRef<string | null>(null);
 
-  const reload = useCallback(async () => {
-    const requested = activeRef.current;
-    if (!requested) return;
+  const loadBackups = useCallback(async () => {
     try {
-      const [nextPortfolio, nextBackups] = await Promise.all([api.portfolio(), api.backups()]);
-      if (activeRef.current !== requested) return;
-      setPortfolio(nextPortfolio);
-      setBackups(nextBackups);
-      setLoadError(null);
-    } catch (error) {
-      if (activeRef.current !== requested) return;
-      setLoadError(error instanceof Error ? error.message : "Could not load the portfolio.");
+      setBackups(await store.backups());
+    } catch {
+      // Only the header's "Last backup" readout uses this; the portfolio still loads.
     }
   }, []);
+
+  /** The active profile's data: cached when fresh (or after no write), fetched otherwise. */
+  const load = useCallback(async (force: boolean) => {
+    try {
+      const next = await store.portfolio(force);
+      if (next) {
+        setPortfolio(next);
+        setLoadError(null);
+      }
+    } catch (error) {
+      if (isAbort(error)) return; // the profile changed; its own load is running
+      setLoadError(error instanceof Error ? error.message : "Could not load the portfolio.");
+    }
+    void loadBackups();
+  }, [loadBackups]);
+
+  /** After a write: the write already cleared what it changed, so this refetches only that. */
+  const reload = useCallback(() => load(false), [load]);
 
   const reloadProfiles = useCallback(async () => {
     const { profiles: list } = await api.profiles();
@@ -81,12 +99,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const switchProfile = useCallback((id: string) => {
-    if (id === activeRef.current) return;
-    activeRef.current = id;
+    if (id === store.active) return;
+    store.switchTo(id); // aborts the previous profile's requests
     setActiveProfileId(id);
     storeProfileId(id);
     setActiveId(id);
-    setPortfolio(null); // never show the previous person's numbers while loading
+    // Shown at once from the cache, or blank while loading: never the previous person's numbers.
+    setPortfolio(store.cachedPortfolio());
     setLoadError(null);
   }, []);
 
@@ -103,8 +122,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [reloadProfiles, switchProfile]);
 
   useEffect(() => {
-    if (activeId) void reload();
-  }, [activeId, reload]);
+    if (activeId) void load(false);
+  }, [activeId, load]);
 
   const addNotices = useCallback((messages: string[]) => {
     if (messages.length) setNotices((current) => [...current, ...messages]);
@@ -113,27 +132,28 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const refreshPrices = useCallback(async () => {
     setRefreshing(true);
     try {
-      await api.refreshPrices();
-      await reload(); // failures that matter come back as portfolio warnings
+      await api.refreshPrices(); // a write: clears every profile's cache (prices are shared)
+      await load(true); // failures that matter come back as portfolio warnings
     } catch (error) {
       addNotices([error instanceof Error ? error.message : "Price refresh failed."]);
     } finally {
       setRefreshing(false);
     }
-  }, [addNotices, reload]);
+  }, [addNotices, load]);
 
   const exportBackup = useCallback(async () => {
     setExporting(true);
     try {
       const { path } = await api.exportBackup();
       addNotices([`Backup saved to ${path}`]);
-      await reload();
+      store.backupsChanged();
+      await loadBackups();
     } catch (error) {
       addNotices([error instanceof Error ? error.message : "Backup was not saved."]);
     } finally {
       setExporting(false);
     }
-  }, [addNotices, reload]);
+  }, [addNotices, loadBackups]);
 
   const activeProfile = profiles.find((p) => p.id === activeId) ?? null;
 

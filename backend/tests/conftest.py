@@ -21,6 +21,16 @@ from app.db import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def bulk_write(monkeypatch):
+    """mongomock's bulk_write rejects the arguments current pymongo passes, so apply
+    UpdateOne operations one by one. Only used by price refreshes."""
+    def apply(self, requests, *args, **kwargs):
+        for request in requests:
+            self.update_one(request._filter, request._doc)
+    monkeypatch.setattr(mongomock.collection.Collection, "bulk_write", apply)
+
+
 @pytest.fixture
 def mongo():
     return mongomock.MongoClient()

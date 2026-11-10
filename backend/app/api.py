@@ -138,6 +138,15 @@ def _check_holdings(transactions: list) -> None:
             )
 
 
+def _mark_if_reopened(db, instrument: dict, before: list, after: list) -> None:
+    """A position going from zero to held has an old price (nobody in this profile was
+    refreshing it), so clear its attempt time: the next portfolio load fetches it."""
+    if instrument["price_source"] != "yahoo":
+        return
+    if not prices.held_instrument_ids(before) and prices.held_instrument_ids(after):
+        db.instruments.update_one({"_id": instrument["_id"]}, {"$set": {"price_attempted_at": None}})
+
+
 def _inr_amount(price_usd: float, rate: float) -> float:
     return float(Fraction(str(price_usd)) * Fraction(str(rate)))
 
@@ -199,6 +208,7 @@ def create_transaction(body: TransactionCreate, scope: Scope = Depends(get_scope
         existing = list(scope.transactions.find({"instrument_id": instrument["_id"]}))
         _check_holdings(existing + [doc])
         scope.transactions.insert_one(doc)
+        _mark_if_reopened(scope.db, instrument, existing, existing + [doc])
         return _finish(scope, instrument, transaction=_public(doc))
 
 
@@ -246,6 +256,7 @@ def update_transaction(
         ))
         _check_holdings(others + [updated])
         scope.transactions.replace_one({"_id": transaction_id}, updated)
+        _mark_if_reopened(scope.db, instrument, others + [current], others + [updated])
         result = _finish(scope, instrument, transaction=_public(updated))
         result["warnings"] = warnings + result["warnings"]
         return result
@@ -256,10 +267,12 @@ def delete_transaction(transaction_id: str, scope: Scope = Depends(get_scope)):
     with WRITE_LOCK:
         current = _transaction(scope, transaction_id)
         instrument = _instrument(scope.db, current["instrument_id"])
-        _check_holdings(list(scope.transactions.find(
+        others = list(scope.transactions.find(
             {"instrument_id": instrument["_id"], "_id": {"$ne": transaction_id}}
-        )))
+        ))
+        _check_holdings(others)
         scope.transactions.delete_one({"_id": transaction_id})
+        _mark_if_reopened(scope.db, instrument, others + [current], others)
         return _finish(scope, instrument, deleted=transaction_id)
 
 

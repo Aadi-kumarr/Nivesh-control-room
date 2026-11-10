@@ -1,12 +1,37 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, isAbort } from "../api";
 import { AddTransaction } from "../components/AddTransaction";
-import { AllocationDonut, GrowthChart } from "../components/Charts";
 import { ProfileLine } from "../components/ProfileMenu";
 import { Modal, Money, Percent, Stat, Xirr } from "../components/common";
-import { useData } from "../DataContext";
+import { store, useData } from "../DataContext";
+
+// The charting library is over half the app's code, so it loads only when a chart shows.
+const AllocationDonut = lazy(() => import("../components/Charts").then((m) => ({ default: m.AllocationDonut })));
+const GrowthChart = lazy(() => import("../components/Charts").then((m) => ({ default: m.GrowthChart })));
+
+function ChartPlaceholder({ height, label }: { height: number; label?: string }) {
+  return <div className="chart-placeholder" style={{ minHeight: height }}>{label && <p className="muted">{label}</p>}</div>;
+}
+
+/** True once the element has been on screen (then stays true). */
+function useInView(element: HTMLElement | null): boolean {
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    if (!element || seen) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setSeen(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) setSeen(true);
+    }, { rootMargin: "200px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element, seen]);
+  return seen;
+}
 import { CLASS_NAMES, CLASS_ORDER, inr, signed } from "../format";
 import type { HistoryPoint, Summary } from "../types";
 
@@ -72,17 +97,20 @@ export function Dashboard() {
   const [points, setPoints] = useState<HistoryPoint[] | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [editingCash, setEditingCash] = useState(false);
+  const [historyCard, setHistoryCard] = useState<HTMLElement | null>(null);
+  const historyVisible = useInView(historyCard);
   const asOf = portfolio?.as_of;
 
-  // After the portfolio, so today's point uses the same stored prices as the cards.
+  // Only once the chart is on screen, and after the portfolio, so today's point uses the
+  // same stored prices as the cards. The store caches it per profile for that portfolio.
   useEffect(() => {
-    if (!asOf) return;
+    if (!asOf || !historyVisible) return;
     let current = true;
-    api.history()
-      .then((result) => { if (current) { setPoints(result.points); setHistoryError(null); } })
-      .catch((failure: Error) => { if (current) setHistoryError(failure.message); });
+    store.history(asOf)
+      .then((result) => { if (current && result) { setPoints(result.points); setHistoryError(null); } })
+      .catch((failure: Error) => { if (current && !isAbort(failure)) setHistoryError(failure.message); });
     return () => { current = false; };
-  }, [asOf]);
+  }, [asOf, historyVisible]);
 
   if (!portfolio) return <p className="muted">Loading portfolio…</p>;
   const total = portfolio.portfolio;
@@ -176,14 +204,20 @@ export function Dashboard() {
         </div>
         <div className="card">
           <h2>Allocation</h2>
-          <AllocationDonut portfolio={portfolio} />
+          <Suspense fallback={<ChartPlaceholder height={300} />}>
+            <AllocationDonut portfolio={portfolio} />
+          </Suspense>
         </div>
       </section>
 
-      <section className="card">
+      <section className="card" ref={setHistoryCard} data-testid="history-card">
         {historyError && <p className="form-error">{historyError}</p>}
-        {!points && !historyError && <p className="muted">Loading history…</p>}
-        {points && <GrowthChart points={points} />}
+        {!points && !historyError && <ChartPlaceholder height={380} label="Loading history…" />}
+        {points && (
+          <Suspense fallback={<ChartPlaceholder height={380} label="Loading history…" />}>
+            <GrowthChart points={points} />
+          </Suspense>
+        )}
       </section>
 
       {editingCash && <CashDialog cash={total.cash_inr} onClose={() => setEditingCash(false)} />}

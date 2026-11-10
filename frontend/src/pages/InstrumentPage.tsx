@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, isAbort } from "../api";
 import { InstrumentForm } from "../components/InstrumentForm";
 import { TransactionForm } from "../components/TransactionForm";
 import { ConfirmDialog, Percent, PriceBadge, Stat, Xirr } from "../components/common";
@@ -26,17 +26,21 @@ export function InstrumentPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      setDetail(await api.instrument(id));
+      setDetail(await api.instrument(id, signal));
       setLoadError(null);
     } catch (failure) {
+      if (isAbort(failure)) return;
       setLoadError(failure instanceof Error ? failure.message : "Could not load the instrument.");
     }
   }, [id]);
 
+  // Aborted on unmount, which a profile switch causes (the page is keyed by profile).
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
   }, [load]);
 
   const saved = (warnings: string[]) => {

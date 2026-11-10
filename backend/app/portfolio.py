@@ -33,8 +33,11 @@ def valuation_price(doc: dict, fx, last_attempt) -> dict:
             return manual
         fx_used = fx["usdinr_used"]
         price *= fx_used
-    # Newer than the last refresh too: a new instrument stores the price it was validated with.
-    fresh = last_attempt is not None and doc["price_updated_at"] >= last_attempt
+    # Live when its latest attempt succeeded. Instruments with no attempt of their own yet
+    # use the global last attempt. Newer than the attempt counts too: a new instrument
+    # stores the price it was validated with.
+    attempted = doc.get("price_attempted_at") or last_attempt
+    fresh = attempted is not None and doc["price_updated_at"] >= attempted
     return {"price_inr": price, "source": "yahoo" if fresh else "yahoo_last_known",
             "status": "live" if fresh else "manual/stale", "fx_used": fx_used}
 
@@ -83,7 +86,7 @@ def build_portfolio(scope, today=None) -> dict:
     for txn in scope.transactions.find():
         transactions[txn["instrument_id"]].append(txn)
 
-    instruments, rows, warnings = [], [], []
+    instruments, rows, warnings, held_attempts = [], [], [], []
     traded = {"_id": {"$in": list(transactions)}}
     for doc in db.instruments.find(traded).sort([("asset_class", 1), ("name", 1)]):
         priced = valuation_price(doc, fx, last_attempt)
@@ -96,6 +99,8 @@ def build_portfolio(scope, today=None) -> dict:
         summary = instrument_summary(instrument, today)
         held = summary["qty"] != 0
         live_expected = doc["price_source"] == "yahoo"
+        if held and live_expected:
+            held_attempts.append(doc.get("price_attempted_at") or last_attempt)
         if held and live_expected and priced["status"] != "live":
             warnings.append(f"{doc['name']}: no live price, using {priced['source']}")
         if held and priced["price_inr"] == 0:
@@ -112,10 +117,13 @@ def build_portfolio(scope, today=None) -> dict:
     # Every class that has instruments gets a row, traded by this profile or not.
     classes = sorted(db.instruments.distinct("asset_class"))
     totals = portfolio_summary(instruments, cash, today, classes)
+    # The header's price age: the oldest attempt among this profile's live-priced holdings.
+    attempts = [value for value in held_attempts if value is not None]
+    fetched = min(attempts) if attempts and len(attempts) == len(held_attempts) else last_attempt
     return {
         "as_of": now.isoformat(),
-        "last_price_fetch": _utc(last_attempt).isoformat() if last_attempt else None,
-        "price_age_minutes": _age_minutes(last_attempt, now),
+        "last_price_fetch": _utc(fetched).isoformat() if fetched else None,
+        "price_age_minutes": _age_minutes(fetched, now),
         "fx": fx and {
             "date": fx["date"],
             "usdinr_market": fx["usdinr_market"],

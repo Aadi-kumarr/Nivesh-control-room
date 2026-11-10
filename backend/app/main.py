@@ -14,7 +14,7 @@ from app.db import get_db  # noqa: E402
 from app.portfolio import build_portfolio  # noqa: E402
 from app.profiles import Scope, get_scope  # noqa: E402
 from app.profiles import router as profiles_router  # noqa: E402
-from app.prices import refresh_if_stale, refresh_prices  # noqa: E402
+from app.prices import held_instrument_ids, refresh_if_stale, refresh_prices  # noqa: E402
 
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -42,14 +42,20 @@ def health(db=Depends(get_db)):
     return {"status": "ok", "mongo": "ok", "db": db.name}
 
 
+def _held(scope: Scope) -> set:
+    return held_instrument_ids(scope.transactions.find({}, {"instrument_id": 1, "type": 1, "quantity": 1}))
+
+
 @app.post("/api/prices/refresh")
-def prices_refresh(db=Depends(get_db)):
-    return refresh_prices(db)
+def prices_refresh(scope: Scope = Depends(get_scope)):
+    """Fetch now, for what the active profile holds (plus USDINR)."""
+    return refresh_prices(scope.db, _held(scope))
 
 
 @app.get("/api/portfolio")
 def portfolio(scope: Scope = Depends(get_scope)):
-    refreshed = refresh_if_stale(scope.db)  # shared prices, for instruments any profile holds
+    # Prices are shared, but only the active profile's holdings are refreshed here.
+    refreshed = refresh_if_stale(scope.db, _held(scope))
     return {"refreshed": refreshed, **build_portfolio(scope)}
 
 

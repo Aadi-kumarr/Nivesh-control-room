@@ -229,6 +229,7 @@ select.picker option { padding: 4px 6px; border-radius: 4px; }
 .swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
 .swatch.selected { border-color: var(--text); }
 .swatches input[type="color"] { width: 36px; height: 28px; padding: 2px; }
+.chart-placeholder { display: flex; align-items: center; justify-content: center; }
 .empty-state { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 32px; }
 .empty-state p { max-width: 560px; }
 

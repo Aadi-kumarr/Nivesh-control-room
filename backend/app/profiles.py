@@ -99,8 +99,8 @@ class ScopedTransactions:
     def _filter(self, query: Optional[dict]) -> dict:
         return {**(query or {}), "profile_id": self.profile_id}
 
-    def find(self, query: Optional[dict] = None):
-        return self._collection.find(self._filter(query))
+    def find(self, query: Optional[dict] = None, projection: Optional[dict] = None):
+        return self._collection.find(self._filter(query), projection)
 
     def find_one(self, query: Optional[dict] = None):
         return self._collection.find_one(self._filter(query))

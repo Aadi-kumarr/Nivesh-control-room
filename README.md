@@ -55,8 +55,8 @@ cd backend
 | `POST /api/profiles` | Add a profile: `name` (unique, ignoring case) and `colour` (`#rrggbb`) |
 | `PATCH`, `DELETE /api/profiles/{id}` | Rename or recolour; delete (not the default) after saving a backup |
 | `GET /api/instruments` | Every instrument, shared by all profiles |
-| `GET /api/portfolio` | Value, P&L and XIRR; refreshes prices if the last fetch is over 15 minutes old |
-| `POST /api/prices/refresh` | Fetch prices from Yahoo now |
+| `GET /api/portfolio` | Value, P&L and XIRR; first refreshes the active profile's held instruments whose last attempt is over 15 minutes old |
+| `POST /api/prices/refresh` | Fetch prices from Yahoo now, for the active profile's held instruments |
 | `GET /api/history?interval=monthly` | Month-end value and net invested, total and per asset class |
 | `GET /api/fx?date=YYYY-MM-DD` | USDINR market rate and the rate used for that date |
 | `GET /api/symbols/check` | Preview a symbol's Yahoo price without saving |
@@ -84,6 +84,21 @@ and FX are shared, and the `FX_DISCOUNT_INR` rule applies to every profile.
 - The default profile can't be deleted. Deleting another one first saves it and its
   transactions to `data/backups/profiles/`, then removes them.
 - The UI remembers the last profile in `localStorage` (`nivesh.activeProfileId`).
+
+### Load
+
+- **Prices** are refreshed only for instruments the active profile holds (quantity not 0),
+  plus USDINR. Each instrument has its own 15-minute rule, kept in `price_attempted_at`, which
+  records every attempt, failed ones too, so a failing symbol is retried at most every 15
+  minutes. A trade that reopens a position (from 0 to held) clears it, so that price is
+  fetched on the next load. Closed positions keep their last price; their value is 0 either way.
+- **The UI caches** each profile's portfolio and history in memory for up to 15 minutes, so
+  switching back to a profile makes no requests. Writes clear what they change: transactions
+  and cash clear that profile; instruments and prices, which are shared, clear every profile.
+  Switching profile aborts the previous profile's requests, and a late response is never
+  shown under another profile.
+- **Charts** (recharts, over half the code) are a separate file loaded only when a chart is
+  shown, and the history chart is fetched when it scrolls into view.
 
 To add profiles to a database from before this feature, run this once from `backend/`.
 It takes a full `mongodump` into `data/backups/pre-profiles-<timestamp>/` first, only adds
@@ -151,6 +166,14 @@ cd backend
 ```
 
 Tests use mongomock and never touch the real database.
+
+The frontend's cache and profile-switch logic (`src/store.ts`) has its own tests, run by
+Node's built-in test runner (Node 22.18+, no extra packages):
+
+```bat
+cd frontend
+npm test
+```
 
 ## Layout
 

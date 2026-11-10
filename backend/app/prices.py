@@ -2,8 +2,10 @@
 import logging
 import math
 import os
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
+from fractions import Fraction
 
 import yfinance as yf
 from pymongo import UpdateOne
@@ -89,25 +91,44 @@ def fetch_quotes(symbols: list) -> dict:
     return {symbol: price for symbol, price in zip(symbols, prices) if price is not None}
 
 
-def refresh_prices(db) -> dict:
-    """Fetch every yahoo-source symbol plus USDINR and store whatever came back."""
+def held_instrument_ids(transactions) -> set:
+    """Instruments whose net quantity is not zero, from one profile's transactions."""
+    net = defaultdict(Fraction)
+    for txn in transactions:
+        sign = 1 if txn["type"] == "BUY" else -1
+        net[txn["instrument_id"]] += sign * Fraction(str(txn["quantity"]))
+    return {instrument_id for instrument_id, qty in net.items() if qty != 0}
+
+
+def _utc(value):
+    return value.replace(tzinfo=timezone.utc) if value is not None else None
+
+
+def refresh_prices(db, instrument_ids=None) -> dict:
+    """Fetch yahoo-source symbols plus USDINR and store whatever came back.
+
+    instrument_ids limits it to those instruments (None means all). Every instrument
+    tried gets price_attempted_at, success or not, so a failing symbol isn't retried
+    on every request.
+    """
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    instruments = list(db.instruments.find({"price_source": "yahoo"}))
+    query = {"price_source": "yahoo"}
+    if instrument_ids is not None:
+        query["_id"] = {"$in": sorted(instrument_ids)}
+    instruments = list(db.instruments.find(query))
     symbols = sorted({doc["symbol"] for doc in instruments})
     quotes = fetch_quotes(symbols + [FX_SYMBOL])
 
-    updates = [
-        UpdateOne(
-            {"_id": doc["_id"]},
-            {"$set": {
-                "last_price": quotes[doc["symbol"]],
-                "last_price_currency": doc["quote_currency"],
-                "price_updated_at": now,
-            }},
-        )
-        for doc in instruments
-        if doc["symbol"] in quotes
-    ]
+    updates = []
+    for doc in instruments:
+        fields = {"price_attempted_at": now}
+        if doc["symbol"] in quotes:
+            fields.update(
+                last_price=quotes[doc["symbol"]],
+                last_price_currency=doc["quote_currency"],
+                price_updated_at=now,
+            )
+        updates.append(UpdateOne({"_id": doc["_id"]}, {"$set": fields}))
     if updates:
         db.instruments.bulk_write(updates)
 
@@ -143,13 +164,25 @@ def latest_fx(db):
     return db.fx.find_one(sort=[("fetched_at", -1)])
 
 
-def refresh_if_stale(db) -> bool:
-    """Refresh if the last attempt is over 15 minutes old. Failed attempts count too,
-    so a Yahoo outage doesn't slow down every request."""
-    state = db.settings.find_one({"_id": STATE_ID})
-    if state:
-        last = state["last_attempt_at"].replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) - last < REFRESH_AFTER:
-            return False
-    refresh_prices(db)
+def stale_instrument_ids(db, instrument_ids) -> list:
+    """The yahoo instruments among these whose last attempt is over 15 minutes old, or
+    that have none (never tried, or reset because a position reopened). Failed attempts
+    count too, so a Yahoo outage doesn't slow down every request."""
+    cutoff = datetime.now(timezone.utc) - REFRESH_AFTER
+    docs = db.instruments.find(
+        {"_id": {"$in": sorted(instrument_ids)}, "price_source": "yahoo"},
+        {"price_attempted_at": 1},
+    )
+    return sorted(
+        doc["_id"] for doc in docs
+        if doc.get("price_attempted_at") is None or _utc(doc["price_attempted_at"]) <= cutoff
+    )
+
+
+def refresh_if_stale(db, instrument_ids) -> bool:
+    """Refresh the stale ones among these instruments (the active profile's holdings)."""
+    stale = stale_instrument_ids(db, instrument_ids)
+    if not stale:
+        return False
+    refresh_prices(db, stale)
     return True
