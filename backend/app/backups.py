@@ -24,10 +24,18 @@ DAILY_NAME = re.compile(r"^nivesh-(\d{8})\.json$")
 
 _lock = threading.Lock()
 
+# Caches of Yahoo data that are fetched again when needed, so snapshots leave them out.
+# daily_closes is rebuilt when a time frame is picked (see periods.load_daily).
+NOT_BACKED_UP = {"daily_closes"}
+
 
 def snapshot_text(db) -> str:
-    """The whole database as JSON. Canonical form keeps int/float/date types for restore."""
-    dump = {name: list(db[name].find()) for name in sorted(db.list_collection_names())}
+    """The whole database, minus re-fetchable caches, as JSON. Canonical form keeps
+    int/float/date types for restore."""
+    dump = {
+        name: list(db[name].find())
+        for name in sorted(db.list_collection_names()) if name not in NOT_BACKED_UP
+    }
     return json_util.dumps(dump, indent=2, json_options=json_util.CANONICAL_JSON_OPTIONS)
 
 

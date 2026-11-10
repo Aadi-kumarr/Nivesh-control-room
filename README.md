@@ -159,8 +159,8 @@ instruments, and Yahoo ones with no close near the date, are valued at their las
 on or before it and listed as estimated.
 
 Daily closes are fetched once per symbol from Yahoo (only for instruments held on a past date)
-and cached in the `daily_closes` collection, which only grows to cover earlier dates. Like
-`price_history`, it is part of each snapshot.
+and cached in the `daily_closes` collection, which only grows to cover earlier dates. It is
+left out of backups (see below) and rebuilt the first time a time frame needs it.
 
 ## Allocation donut
 
@@ -187,6 +187,9 @@ the same numbers as `GET /api/portfolio`, including cash; earlier points have no
 - Set `BACKUP_MIRROR_DIR` in `backend/.env` to copy each snapshot elsewhere, e.g. OneDrive.
   The same limits apply there, and only to files with these snapshot names.
 - If a backup fails, the write still succeeds and the response has a warning.
+- Automatic, daily and exported snapshots hold every collection except `daily_closes`, a cache
+  of Yahoo daily prices that is fetched again when a time frame is picked. A restored database
+  works as is; the first period choice after a restore re-fetches those prices.
 
 To restore, run this from `backend/`. It creates a new database and never touches `nivesh`:
 

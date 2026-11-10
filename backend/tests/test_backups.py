@@ -258,3 +258,67 @@ def test_restore_rejects_non_snapshot(mongo, tmp_path):
     master_shape.write_text(json.dumps({"cash": 0, "assetClasses": []}))
     with pytest.raises(SystemExit, match="not a database snapshot"):
         restore_backup.restore(mongo, master_shape)
+
+
+# daily_closes is a re-fetchable cache: never in a snapshot --------------------------------
+
+CACHED = {"_id": "YCO.NS", "closes": {"2025-03-14": 100.0}, "from": "2025-03-05", "to": "2026-03-15",
+          "fetched_at": datetime(2026, 3, 15)}
+
+
+def test_snapshots_leave_out_daily_closes_and_keep_everything_else(client, db, root, indian):
+    db.daily_closes.insert_one(dict(CACHED))
+    db.price_history.insert_one({"_id": "TESTCO.NS", "closes": {}})  # other caches stay in
+    for old in [*auto_files(root), *(root / "daily").glob("*.json")]:  # taken before the data above
+        old.unlink()
+    trade(client, indian, "2026-01-01", "BUY", 1)  # an automatic and the daily snapshot
+    assert len(auto_files(root)) == 1 and len(list((root / "daily").glob("*.json"))) == 1
+    export = Path(client.post("/api/export").json()["path"])  # a manual one
+
+    expected = set(db.list_collection_names()) - {"daily_closes"}
+    load = lambda path: json_util.loads(path.read_text(encoding="utf-8"))  # noqa: E731
+    # The daily snapshot is taken just before the write, so only its collections are compared.
+    assert set(load(next((root / "daily").glob("*.json")))) == expected
+    for path in [*auto_files(root), export]:
+        snapshot = load(path)
+        assert set(snapshot) == expected, path
+        for name in expected:
+            assert snapshot[name] == list(db[name].find()), (path, name)
+    assert db.daily_closes.count_documents({}) == 1  # the live cache is not touched
+
+
+def test_restored_backup_rebuilds_daily_closes_when_a_period_is_picked(client, mongo, db, root, monkeypatch):
+    from datetime import date
+
+    from app import periods
+    from app.profiles import scope_for
+
+    db.instruments.insert_one({
+        "_id": "YCO", "asset_class": "indian-equities", "name": "YCO", "symbol": "YCO.NS",
+        "price_source": "yahoo", "quote_currency": "INR", "manual_price_inr": 0, "last_price": 150.0,
+        "last_price_currency": "INR", "price_updated_at": datetime(2026, 3, 15, 9), "needs_review": False,
+        "review_note": None,
+    })
+    assert trade(client, "YCO", "2025-01-10", "BUY", 10, price_inr=80).status_code == 201
+    db.daily_closes.insert_one(dict(CACHED))
+    export = Path(client.post("/api/export").json()["path"])
+
+    name, counts = restore_backup.restore(mongo, export)
+    restored = mongo[name]
+    assert "daily_closes" not in counts and "daily_closes" not in restored.list_collection_names()
+
+    calls = []
+
+    def fetch(symbol, start, today):
+        calls.append(symbol)
+        return {"2025-03-14": 100.0}
+
+    monkeypatch.setattr(periods, "fetch_daily", fetch)
+    today = date(2026, 3, 15)
+    result = periods.build_period(scope_for(restored), date(2025, 3, 15), today, today=today)["portfolio"]
+
+    assert result["start_value"] == 1000 and result["estimated"] == []
+    assert calls == ["YCO.NS"]
+    assert restored.daily_closes.find_one({"_id": "YCO.NS"})["closes"] == {"2025-03-14": 100.0}
+    periods.build_period(scope_for(restored), date(2025, 3, 15), today, today=today)
+    assert calls == ["YCO.NS"]  # rebuilt once, then served from the cache again
